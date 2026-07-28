@@ -1,0 +1,18 @@
+id = "local.agent-manager"
+name = "Agent Manager"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "Quick search/select/send messages to herdr agents."
+platforms = ["linux", "macos"]
+
+[[actions]]
+id = "picker"
+title = "Pick agent and send message"
+contexts = ["pane"]
+command = ["bin/agent-manager.py"]
+
+[[actions]]
+id = "space-picker"
+title = "Pick workspace/space"
+contexts = ["pane"]
+command = ["bin/space-picker.py"]

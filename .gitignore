@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Backups created by install.sh
+*.backup.*
+
+# Local herdr runtime state
+.claude/
