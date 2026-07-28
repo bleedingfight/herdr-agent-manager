@@ -53,6 +53,7 @@ workspace 选择器：**树状结构**，任意节点都可修改：
 
 ```text
 agent-manager/
+├── .gitignore              # git 忽略规则
 ├── herdr-plugin.toml       # 插件清单
 ├── README.md               # 本文件
 ├── install.sh              # 一键安装脚本
@@ -215,6 +216,42 @@ fzf_colors = "bg+:#3b4261,fg+:#ffffff"
 ```
 
 修改 `#3b4261` 为你想要的高亮背景色。
+
+---
+
+## 版本管理
+
+这个插件目录本身已经是一个 Git 仓库，初始化提交已完成。
+
+```bash
+cd ~/.config/herdr/plugins/local/agent-manager
+git log --oneline
+```
+
+日常开发或修改后，按常规 Git 流程提交：
+
+```bash
+git add .
+git commit -m "your change description"
+```
+
+### 推送到 GitHub/GitLab
+
+```bash
+git remote add origin git@github.com:<your-username>/herdr-agent-manager.git
+git push -u origin main
+```
+
+别人安装时可以直接 clone 再运行 install 脚本：
+
+```bash
+git clone git@github.com:<your-username>/herdr-agent-manager.git
+# 或者 https://github.com/<your-username>/herdr-agent-manager.git
+cd herdr-agent-manager
+./install.sh
+```
+
+这样你就可以通过正常的 PR / 分支 / tag 来管理这个插件了。
 
 ---
 
