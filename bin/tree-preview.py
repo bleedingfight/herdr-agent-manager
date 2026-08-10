@@ -12,6 +12,14 @@ def herdr(*args):
     return r.stdout
 
 
+def normalize_agent(a):
+    # Newer herdr versions omit `name` for agents that haven't been explicitly
+    # renamed; fall back to terminal_id (a valid target for `herdr agent ...`).
+    if not a.get("name"):
+        a["name"] = a.get("terminal_id") or a.get("pane_id") or "agent"
+    return a
+
+
 def main():
     if len(sys.argv) < 2 or ":" not in sys.argv[1]:
         print("usage: tree-preview.py <type:id>")
@@ -19,6 +27,7 @@ def main():
 
     typ, id_ = sys.argv[1].split(":", 1)
     snap = json.loads(herdr("api", "snapshot"))["result"]["snapshot"]
+    snap["agents"] = [normalize_agent(a) for a in snap.get("agents", [])]
 
     if typ == "workspace":
         ws = next((w for w in snap["workspaces"] if w["workspace_id"] == id_), None)
@@ -40,6 +49,14 @@ def main():
         print("Agents:")
         for a in agents:
             print(f"  • {a['name']} [{a.get('agent_status','unknown')}] {a.get('terminal_title_stripped','')}")
+        # Live agent sessions herdr doesn't manage (e.g. panes moved from
+        # another workspace, where the agent registry didn't follow).
+        known = {a.get("pane_id") for a in agents}
+        ws_panes = [p for p in snap["panes"] if p.get("workspace_id") == id_]
+        unmanaged = [p for p in ws_panes if p.get("agent_session") and p["pane_id"] not in known]
+        for p in unmanaged:
+            title = p.get("terminal_title_stripped", "") or p.get("label", "-")
+            print(f"  • {title} [detected]  (live session herdr doesn't manage)")
 
     elif typ == "tab":
         tab = next((t for t in snap["tabs"] if t["tab_id"] == id_), None)
@@ -57,6 +74,9 @@ def main():
             agent = next((a for a in snap["agents"] if a.get("pane_id") == p["pane_id"]), None)
             if agent:
                 print(f"  • {agent['name']} [{agent.get('agent_status','unknown')}] {agent.get('terminal_title_stripped','')}")
+            elif p.get("agent_session"):
+                title = p.get("terminal_title_stripped", "") or p.get("label", "-")
+                print(f"  • {title} [detected]  (live session herdr doesn't manage)")
             else:
                 title = p.get("terminal_title_stripped", "") or p.get("label", "-")
                 print(f"  • pane {title}")
@@ -71,6 +91,16 @@ def main():
         if agent:
             plugin_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             subprocess.run([os.path.join(plugin_root, "bin", "agent-preview.py"), agent["name"]])
+        elif pane and pane.get("agent_session"):
+            print(f"Agent (unmanaged): {id_}")
+            print(f"Title: {pane.get('terminal_title_stripped','-')}")
+            print(f"Label: {pane.get('label','-')}")
+            print(f"Tab: {pane.get('tab_id','-')}")
+            print(f"Workspace: {pane.get('workspace_id','-')}")
+            print(f"CWD: {pane.get('cwd','-')}")
+            print("Note: live agent session (e.g. claude) herdr doesn't manage —")
+            print("      likely moved from another workspace. `herdr agent` send/")
+            print("      rename/focus won't work; Set pane label / Move / Close still do.")
         else:
             print(f"Pane: {id_}")
             print(f"Title: {pane.get('terminal_title_stripped','-')}")

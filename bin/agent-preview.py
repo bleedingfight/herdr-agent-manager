@@ -7,6 +7,14 @@ import sys
 HERDR = os.environ.get("HERDR_BIN_PATH", "herdr")
 
 
+def normalize_agent(a):
+    # Newer herdr versions omit `name` for agents that haven't been explicitly
+    # renamed; fall back to terminal_id (a valid target for `herdr agent ...`).
+    if not a.get("name"):
+        a["name"] = a.get("terminal_id") or a.get("pane_id") or "agent"
+    return a
+
+
 def herdr(*args):
     r = subprocess.run([HERDR, *args], capture_output=True, text=True, check=True)
     return r.stdout
@@ -19,6 +27,7 @@ def main():
 
     name = sys.argv[1]
     agents = json.loads(herdr("agent", "list"))["result"]["agents"]
+    agents = [normalize_agent(a) for a in agents]
     agent = next((a for a in agents if a["name"] == name), None)
     if agent is None:
         print("Agent not found")
