@@ -6,7 +6,11 @@ import subprocess
 import sys
 
 HERDR = os.environ.get("HERDR_BIN_PATH", "herdr")
-MODIFY_KEY = "ctrl-e"
+# We use Alt-M for "edit/modify". Avoid Ctrl-E: herdr's herdr-navigator plugin
+# binds Ctrl-E globally to termscope.open-links, so the keystroke is captured
+# before it ever reaches fzf's --expect and the modify menu never opens.
+# (Ctrl-M would also be wrong — it's indistinguishable from Enter in terminals.)
+MODIFY_KEY = "alt-m"
 
 
 def normalize_agent(a):

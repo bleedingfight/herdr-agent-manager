@@ -16,16 +16,16 @@ A local plugin for [Herdr](https://herdr.dev) that lets you quickly search / sel
   - Right-side preview shows the agent's workspace, status, cwd, title, and the last 30 lines of colorized output
   - Once an agent is selected you can: send a message / change workspace / change tab / rename / set pane label / focus / close the pane
   - Agents with no explicit name fall back to their `terminal_id` as the label, so the list never crashes on a missing field
-  - Quick rename (skips the `Ctrl + e` sub-menu): `Alt + t` renames the current agent (title / name), `Alt + l` sets the current pane's label
+  - Quick rename (skips the `Alt + m` sub-menu): `Alt + t` renames the current agent (title / name), `Alt + l` sets the current pane's label
   - `Alt + n`: create a new workspace using the selected agent's cwd as the working directory (label optional; if left blank, herdr auto-names it from the cwd's basename)
 
 - **Workspace/Space picker** (`prefix + w`)
   - Renders the `workspace → tab → agent/pane` hierarchy as a **tree**
-  - Select any level (workspace / tab / agent / pane), press `Enter` to focus it, `Ctrl + e` to open the modify menu
+  - Select any level (workspace / tab / agent / pane), press `Enter` to focus it, `Alt + m` to open the modify menu
   - When you press Enter on an agent / pane node, it first runs `tab focus` on the containing tab, then `agent focus` on the pane, so you actually switch to it
   - Supported actions: focus, rename, set pane label, move, close, send message
   - Move capabilities: an agent / pane can move to **any tab in any workspace** (`Move to tab` now lists targets across all workspaces, options labeled `workspace / tab`); a whole tab can move to **another workspace** (`Move tab to workspace` — creates a target tab in the destination and moves all the source tab's panes over, then auto-closes the source tab)
-  - Quick rename (skips the `Ctrl + e` sub-menu): `Alt + t` renames the current node (agent name, or a workspace / tab label), `Alt + l` sets the current pane's label (agent/pane nodes only)
+  - Quick rename (skips the `Alt + m` sub-menu): `Alt + t` renames the current node (agent name, or a workspace / tab label), `Alt + l` sets the current pane's label (agent/pane nodes only)
   - `Alt + n`: create a new workspace using the current node's directory as the working directory. On an agent/pane it uses that pane's cwd; on a workspace/tab it uses the cwd of the focused pane inside it; label optional (if blank, herdr auto-names from the cwd basename). It does not auto-switch focus afterward — the new workspace appears in the refreshed tree; press Enter to focus it
   - `Ctrl + r`: manually re-render the tree in place (a fallback on top of the auto-refresh, for when you want to force a re-pull). The picker already **auto-refreshes live** (see below), so you usually don't need this
   - **Live auto-refresh**: while the picker is open, a background watcher thread checks the herdr state fingerprint (labels, ownership, and agent status of workspaces/tabs/panes) every 0.5s. If you edit / move / rename / create / close any pane or tab in **another pane**, the watcher detects the change and reloads the list with the latest tree via fzf's `--listen` socket — **no need to close and reopen, no keypress needed**. This solves the "I edited a pane but the picker still shows the old state" problem: when you come back to a still-open picker, the list is already up to date. Each reload re-runs `herdr api snapshot` (~3.6ms) + rebuilds the tree (~6ms) — accurate and smooth
@@ -239,7 +239,7 @@ Press ctrl+b a
  → search / arrow-select
  → press the matching key to act:
      Enter       type a message and send it; returns to fzf to keep selecting
-     Ctrl + e    open the modify menu: move workspace / move tab / rename / set pane label
+     Alt + m    open the modify menu: move workspace / move tab / rename / set pane label
      Alt + t     rename the current agent (title / name) directly, skipping the sub-menu; returns to fzf when done
      Alt + l     set the current pane's label directly, skipping the sub-menu; returns to fzf when done
      Alt + n     create a new workspace from the current agent's cwd (label optional); returns to fzf when done
@@ -271,7 +271,7 @@ Press ctrl+b w
  → or Alt + l to set the current pane's label (agent/pane nodes only)
  → or Alt + n to create a new workspace from the current node's directory (label optional)
  → or Ctrl + r to refresh the tree (re-pulls the snapshot, refreshes in place, doesn't exit the picker)
- → or Ctrl + e to open the modify menu:
+ → or Alt + m to open the modify menu:
      workspace node: Rename workspace / Close workspace
      tab node:       Rename tab / Move tab to workspace / Close tab
      agent/pane node: Send message / Rename / Set pane label / Move to workspace / Move to tab / Close

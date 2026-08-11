@@ -10,9 +10,11 @@ import time
 
 HERDR = os.environ.get("HERDR_BIN_PATH", "herdr")
 
-# We use Ctrl-E for "edit/modify" instead of Ctrl-M because Ctrl-M
-# is indistinguishable from Enter in most terminals.
-MODIFY_KEY = "ctrl-e"
+# We use Alt-M for "edit/modify". Avoid Ctrl-E: herdr's herdr-navigator plugin
+# binds Ctrl-E globally to termscope.open-links, so the keystroke is captured
+# before it ever reaches fzf's --expect and the modify menu never opens.
+# (Ctrl-M would also be wrong — it's indistinguishable from Enter in terminals.)
+MODIFY_KEY = "alt-m"
 
 
 def set_title(title):
