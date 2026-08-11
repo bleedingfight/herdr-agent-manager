@@ -83,7 +83,32 @@ agent-manager/
 
 ## Install
 
-### One-click install (recommended)
+### Install via `herdr plugin install` (recommended)
+
+If herdr >= 0.7.0 is installed, install the plugin straight from GitHub with a
+single command — no manual clone or copy needed:
+
+```bash
+herdr plugin install bleedingfight/herdr-agent-manager --yes
+```
+
+herdr fetches the repo, places it under `~/.config/herdr/plugins/github/`,
+links it (plugin id: `local.agent-manager`), and reloads the config. Then add
+the keybindings (see [Configure keybindings](#configure-keybindings)) — prefer
+the `plugin_action` form, which is independent of the install path and keeps
+working across plugin updates — and reload once more:
+
+```bash
+herdr server reload-config
+```
+
+After that, press `ctrl+b a` and `ctrl+b w`.
+
+To update later, re-run the same `herdr plugin install` command (or pass
+`--ref <tag>` for a specific tag). To remove, run
+`herdr plugin uninstall local.agent-manager`.
+
+### Install via install.sh (local clone)
 
 Run inside the plugin directory:
 
@@ -156,21 +181,40 @@ herdr plugin link ~/.config/herdr/plugins/local/agent-manager
 
 ## Configure keybindings
 
-Add to `~/.config/herdr/config.toml`:
+Add to `~/.config/herdr/config.toml`. The recommended form is
+`type = "plugin_action"`, which references the plugin's action by id and does
+not depend on the install path — it works with both `herdr plugin install`
+and the local-clone install, and survives plugin updates:
+
+```toml
+[[keys.command]]
+key = "prefix+a"
+type = "plugin_action"
+command = "local.agent-manager.picker"
+description = "Pick agent and send message"
+
+[[keys.command]]
+key = "prefix+w"
+type = "plugin_action"
+command = "local.agent-manager.space-picker"
+description = "Pick workspace/space"
+```
+
+If you prefer to point at the scripts directly (e.g. for a local clone), use
+the absolute-path form instead. herdr does not expand `~`, so replace it with
+your real home directory:
 
 ```toml
 [[keys.command]]
 key = "prefix+a"
 type = "pane"
-command = "~/.config/herdr/plugins/local/agent-manager/bin/agent-manager.py"
+command = "/home/you/.config/herdr/plugins/local/agent-manager/bin/agent-manager.py"
 
 [[keys.command]]
 key = "prefix+w"
 type = "pane"
-command = "~/.config/herdr/plugins/local/agent-manager/bin/space-picker.py"
+command = "/home/you/.config/herdr/plugins/local/agent-manager/bin/space-picker.py"
 ```
-
-> The paths above use `~` for the home directory. herdr does not expand `~` — replace it with your real home directory path.
 
 The default prefix is `ctrl+b`, so:
 

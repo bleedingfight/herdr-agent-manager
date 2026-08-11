@@ -83,7 +83,29 @@ agent-manager/
 
 ## 安装
 
-### 一键安装（推荐）
+### 通过 `herdr plugin install` 安装（推荐）
+
+只要装了 herdr >= 0.7.0，就能用一条命令直接从 GitHub 安装，无需手动 clone 或拷贝：
+
+```bash
+herdr plugin install bleedingfight/herdr-agent-manager --yes
+```
+
+herdr 会拉取仓库、放到 `~/.config/herdr/plugins/github/` 下、链接插件
+（plugin id：`local.agent-manager`）并重载配置。然后按下文的
+[配置快捷键](#配置快捷键)添加——推荐用 `plugin_action` 形式，它不依赖安装
+路径，插件更新后依然有效——再重载一次即可：
+
+```bash
+herdr server reload-config
+```
+
+装完后按 `ctrl+b a` 和 `ctrl+b w` 就能用。
+
+日后更新只需再跑一遍同样的 `herdr plugin install` 命令（或加
+`--ref <tag>` 指定某个 tag）；卸载用 `herdr plugin uninstall local.agent-manager`。
+
+### 通过 install.sh 安装（本地 clone）
 
 在插件目录内执行：
 
@@ -156,21 +178,38 @@ herdr plugin link ~/.config/herdr/plugins/local/agent-manager
 
 ## 配置快捷键
 
-在 `~/.config/herdr/config.toml` 中添加：
+在 `~/.config/herdr/config.toml` 中添加。推荐用 `type = "plugin_action"`
+形式，它按 id 引用插件的 action，不依赖安装路径——`herdr plugin install`
+和本地 clone 两种装法都适用，插件更新后也不会失效：
+
+```toml
+[[keys.command]]
+key = "prefix+a"
+type = "plugin_action"
+command = "local.agent-manager.picker"
+description = "Pick agent and send message"
+
+[[keys.command]]
+key = "prefix+w"
+type = "plugin_action"
+command = "local.agent-manager.space-picker"
+description = "Pick workspace/space"
+```
+
+如果你更想直接指向脚本（例如本地 clone 的场景），可以用绝对路径形式。
+herdr 不会自动展开 `~`，请换成你的真实家目录：
 
 ```toml
 [[keys.command]]
 key = "prefix+a"
 type = "pane"
-command = "~/.config/herdr/plugins/local/agent-manager/bin/agent-manager.py"
+command = "/home/you/.config/herdr/plugins/local/agent-manager/bin/agent-manager.py"
 
 [[keys.command]]
 key = "prefix+w"
 type = "pane"
-command = "~/.config/herdr/plugins/local/agent-manager/bin/space-picker.py"
+command = "/home/you/.config/herdr/plugins/local/agent-manager/bin/space-picker.py"
 ```
-
-> 上面的路径用 `~` 表示家目录，herdr 不会自动展开，请换成你的真实家目录路径。
 
 默认 prefix 是 `ctrl+b`，所以：
 
