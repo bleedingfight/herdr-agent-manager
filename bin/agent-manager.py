@@ -223,7 +223,7 @@ def pick_agent(agents):
 
     fzf_colors = "bg+:#3b4261,fg+:#ffffff"
     fzf_header = (f"agents — enter:send  {MODIFY_KEY}:modify  "
-                  f"alt-t:title  alt-l:label  alt-n:new-agent  ctrl-r:rename  ctrl-f:focus  ctrl-x:close  esc:quit")
+                  f"ctrl-t:title  ctrl-l:label  ctrl-n:new-agent  ctrl-r:rename  ctrl-f:focus  ctrl-x:close  esc:quit")
     header_visible = (
         f"{headers[0]:<{widths[0]}}  "
         f"{headers[1]:<{widths[1]}}  "
@@ -242,7 +242,7 @@ def pick_agent(agents):
                "--header", fzf_header,
                "--preview", preview,
                "--preview-window=right:50%",
-               f"--expect={MODIFY_KEY},ctrl-r,ctrl-f,ctrl-x,alt-t,alt-l,alt-n",
+               f"--expect={MODIFY_KEY},ctrl-r,ctrl-f,ctrl-x,ctrl-t,ctrl-l,ctrl-n",
                "--color", fzf_colors],
         input="\n".join(lines),
         capture_output=True,
@@ -287,7 +287,7 @@ def set_pane_label(agent):
 
 
 def new_workspace(agent):
-    # alt-n (now in the modify menu): create a workspace whose cwd is the
+    # ctrl-n (now in the modify menu): create a workspace whose cwd is the
     # selected agent's directory.
     cwd = agent.get("cwd") or os.getcwd()
     label = prompt(f"New workspace label (optional). cwd: {cwd}: ")
@@ -353,7 +353,7 @@ def pick_workspace_for_new():
 
 
 def create_agent(agent):
-    # alt-n: start a new agent via `herdr agent start` in a chosen workspace.
+    # ctrl-n: start a new agent via `herdr agent start` in a chosen workspace.
     # Defaults are pre-filled and editable: argv defaults to `opencode`, cwd
     # defaults to the selected agent's cwd, name defaults to basename(argv).
     # Supports --env KEY=VALUE for agents that need env vars (e.g. opencode).
@@ -497,15 +497,15 @@ def main():
             rename_agent(name)
             continue
 
-        if action == "alt-t":
+        if action == "ctrl-t":
             rename_agent(name)
             continue
 
-        if action == "alt-l":
+        if action == "ctrl-l":
             set_pane_label(agent)
             continue
 
-        if action == "alt-n":
+        if action == "ctrl-n":
             create_agent(agent)
             continue
 

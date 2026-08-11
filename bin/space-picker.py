@@ -481,7 +481,7 @@ def focus_item(snapshot, typ, id_):
 
 
 def rename_node(snapshot, typ, id_):
-    # alt-t: rename the node's primary identifier without opening the modify
+    # ctrl-t: rename the node's primary identifier without opening the modify
     # submenu (agent name, or workspace/tab label).
     if typ == "workspace":
         ws = lookup(snapshot, typ, id_)
@@ -515,7 +515,7 @@ def rename_node(snapshot, typ, id_):
 
 
 def set_node_pane_label(snapshot, typ, id_):
-    # alt-l: set the pane's label directly, skipping the modify submenu.
+    # ctrl-l: set the pane's label directly, skipping the modify submenu.
     # Only meaningful for agent/pane nodes.
     if typ not in ("agent", "pane"):
         return
@@ -555,7 +555,7 @@ def resolve_cwd(snapshot, typ, id_):
 
 
 def new_workspace(snapshot, typ, id_):
-    # alt-n: create a workspace whose cwd is the selected node's directory.
+    # ctrl-n: create a workspace whose cwd is the selected node's directory.
     cwd = resolve_cwd(snapshot, typ, id_)
     label = prompt(f"New workspace label (optional). cwd: {cwd}: ")
     args = ["workspace", "create", "--cwd", cwd, "--no-focus"]
@@ -692,7 +692,7 @@ def main():
 
             set_title("spaces")
             fzf_header = (f"spaces tree — enter:focus  {MODIFY_KEY}:modify  "
-                         f"alt-t:title  alt-l:label  alt-n:new-ws  "
+                         f"ctrl-t:title  ctrl-l:label  ctrl-n:new-ws  "
                          f"ctrl-r:refresh  esc:quit")
             # ctrl-r reloads the tree in place from a fresh snapshot (manual refresh
             # on top of the automatic watcher-driven refresh).
@@ -735,7 +735,7 @@ def main():
                        "--prompt=space> ",
                        "--preview", preview,
                        "--preview-window=right:50%",
-                       f"--expect={MODIFY_KEY},alt-t,alt-l,alt-n",
+                       f"--expect={MODIFY_KEY},ctrl-t,ctrl-l,ctrl-n",
                        "--bind", reload_bind,
                        f"--listen={sock_path}",
                        "--color", "bg+:#3b4261,fg+:#ffffff"],
@@ -781,15 +781,15 @@ def main():
                 modify(snapshot, typ, id_)
                 continue
 
-            if action == "alt-t":
+            if action == "ctrl-t":
                 rename_node(snapshot, typ, id_)
                 continue
 
-            if action == "alt-l":
+            if action == "ctrl-l":
                 set_node_pane_label(snapshot, typ, id_)
                 continue
 
-            if action == "alt-n":
+            if action == "ctrl-n":
                 new_workspace(snapshot, typ, id_)
                 continue
 

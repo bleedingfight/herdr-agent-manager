@@ -16,8 +16,8 @@
   - 右侧预览 agent 的 workspace、状态、cwd、标题 以及最近 30 行彩色输出
   - 选中后可以执行多种操作：发消息 / 修改 workspace / 修改 tab / 重命名 / 设置 pane label / 聚焦 / 关闭 pane
   - 没有 explicit name 的 agent 会自动回退用 `terminal_id` 作为标识，列表不会因缺字段而崩溃
-  - 快捷重命名（跳过 `Ctrl + o` 子菜单）：`Alt + t` 直接重命名当前 agent（title / 名称），`Alt + l` 直接设置当前 pane 的 label
-  - `Alt + n`：以当前选中 agent 的 cwd 为工作目录创建一个新 workspace（label 可留空，留空时 herdr 会用 cwd 的 basename 自动命名）
+  - 快捷重命名（跳过 `Ctrl + o` 子菜单）：`Ctrl + t` 直接重命名当前 agent（title / 名称），`Ctrl + l` 直接设置当前 pane 的 label
+  - `Ctrl + n`：以当前选中 agent 的 cwd 为工作目录创建一个新 workspace（label 可留空，留空时 herdr 会用 cwd 的 basename 自动命名）
 
 - **Workspace/Space 选择器** (`prefix + w`)
   - 以**树状层次结构**展示 `workspace → tab → agent/pane`
@@ -25,8 +25,8 @@
   - 选中 agent / pane 节点回车时，会先 `tab focus` 到所在 tab，再 `agent focus` 到对应 pane，确保真正切换过去
   - 支持操作：聚焦、重命名、设置 pane label、移动、关闭、发送消息
   - 移动能力：agent / pane 可移动到**任意 workspace 的任意 tab**（`Move to tab` 现在跨 workspace 列出目标，选项里标了 `workspace / tab`）；整个 tab 可移动到**其他 workspace**（`Move tab to workspace`，内部新建目标 tab 并把源 tab 的所有 pane 搬过去，源 tab 自动关闭）
-  - 快捷重命名（跳过 `Ctrl + o` 子菜单）：`Alt + t` 直接重命名当前节点（agent 名称，或 workspace / tab 的 label），`Alt + l` 直接设置当前 pane 的 label（仅 agent/pane 节点）
-  - `Alt + n`：以当前光标所在节点的目录为工作目录创建一个新 workspace。光标在 agent/pane 上取该 pane 的 cwd，在 workspace/tab 上取其内部 focused pane 的 cwd；label 可留空（留空时 herdr 用 cwd 的 basename 自动命名）。创建后不自动切换焦点，新 workspace 会出现在刷新后的树里，按 Enter 即可聚焦
+  - 快捷重命名（跳过 `Ctrl + o` 子菜单）：`Ctrl + t` 直接重命名当前节点（agent 名称，或 workspace / tab 的 label），`Ctrl + l` 直接设置当前 pane 的 label（仅 agent/pane 节点）
+  - `Ctrl + n`：以当前光标所在节点的目录为工作目录创建一个新 workspace。光标在 agent/pane 上取该 pane 的 cwd，在 workspace/tab 上取其内部 focused pane 的 cwd；label 可留空（留空时 herdr 用 cwd 的 basename 自动命名）。创建后不自动切换焦点，新 workspace 会出现在刷新后的树里，按 Enter 即可聚焦
   - `Ctrl + r`：手动原地刷新树（在自动刷新之上的兜底，比如你想立刻强制重拉一次）。选择器本身已**自动实时刷新**（见下），通常无需手动按。
   - **自动实时刷新**：picker 打开期间有一个后台 watcher 线程，每 0.5 秒检查一次 herdr 状态指纹（workspaces/tabs/panes 的 label、归属、agent 状态）。你在**别的 pane** 里编辑/移动/重命名/新建/关闭了任何 pane 或 tab，watcher 检测到变化后会通过 fzf 的 `--listen` socket 自动让列表 reload 最新树——**不用关重开、不用按键**。这是为了解决"编辑完一个 pane，picker 还显示旧状态"的问题：回到还开着的 picker，列表已经是新的了。每次 reload 都重新调 `herdr api snapshot`（~3.6ms）+ 重建树（~6ms），准确且不卡。
   - 搜索时**保持树状嵌套顺序**：列表用 `--no-sort` 渲染，输入关键词筛选时**不会**按匹配度重排——子节点（如 `tab travel`）始终紧跟其父 workspace（如 `travel-rule`）之后，不会因为"匹配度更高"而漂到列表最上方脱离父节点。这样移动完一个 tab 后搜它的名字，能直接在它所属 workspace 下方看到它
@@ -91,10 +91,12 @@ agent-manager/
 herdr plugin install bleedingfight/herdr-agent-manager --yes
 ```
 
-herdr 会拉取仓库、放到 `~/.config/herdr/plugins/github/` 下、链接插件
-（plugin id：`local.agent-manager`）并重载配置。然后按下文的
-[配置快捷键](#配置快捷键)添加——推荐用 `plugin_action` 形式，它不依赖安装
-路径，插件更新后依然有效——再重载一次即可：
+herdr 会拉取仓库、放到
+`~/.config/herdr/plugins/github/local.agent-manager-<hash>/` 下、链接插件
+（plugin id：`local.agent-manager`）并重载配置。然后按下文
+[配置快捷键](#配置快捷键)添加——**用 `type = "pane"`，不要用
+`plugin_action`**（这些选择器跑的是裸 `fzf`，需要交互 TTY，只有 `type = "pane"`
+才会开临时 pane 给 TTY）——再重载一次即可：
 
 ```bash
 herdr server reload-config
@@ -178,37 +180,30 @@ herdr plugin link ~/.config/herdr/plugins/local/agent-manager
 
 ## 配置快捷键
 
-在 `~/.config/herdr/config.toml` 中添加。推荐用 `type = "plugin_action"`
-形式，它按 id 引用插件的 action，不依赖安装路径——`herdr plugin install`
-和本地 clone 两种装法都适用，插件更新后也不会失效：
+在 `~/.config/herdr/config.toml` 中添加。**用 `type = "pane"`**（herdr 会开
+一个临时 pane 并给它交互 TTY），**不要用 `type = "plugin_action"`**：这些
+选择器跑的是裸 `fzf`，需要 TTY；用 `plugin_action` 时 herdr 不开 pane、不给
+TTY，`fzf` 会卡住/不渲染，快捷键就像没反应一样。`command` 指向已装脚本的
+绝对路径（herdr 不展开 `~`）：
+
+- `herdr plugin install` 装的：脚本在
+  `~/.config/herdr/plugins/github/local.agent-manager-<hash>/bin/...`
+  （`<hash>` 目录用 `ls ~/.config/herdr/plugins/github/` 查；该 hash 在重装
+  时稳定，所以路径不会因更新而失效）。
+- 本地 clone 装的：`~/.config/herdr/plugins/local/agent-manager/bin/...`
 
 ```toml
 [[keys.command]]
 key = "prefix+a"
-type = "plugin_action"
-command = "local.agent-manager.picker"
+type = "pane"
+command = "/home/you/.config/herdr/plugins/github/local.agent-manager-<hash>/bin/agent-manager.py"
 description = "Pick agent and send message"
 
 [[keys.command]]
 key = "prefix+w"
-type = "plugin_action"
-command = "local.agent-manager.space-picker"
+type = "pane"
+command = "/home/you/.config/herdr/plugins/github/local.agent-manager-<hash>/bin/space-picker.py"
 description = "Pick workspace/space"
-```
-
-如果你更想直接指向脚本（例如本地 clone 的场景），可以用绝对路径形式。
-herdr 不会自动展开 `~`，请换成你的真实家目录：
-
-```toml
-[[keys.command]]
-key = "prefix+a"
-type = "pane"
-command = "/home/you/.config/herdr/plugins/local/agent-manager/bin/agent-manager.py"
-
-[[keys.command]]
-key = "prefix+w"
-type = "pane"
-command = "/home/you/.config/herdr/plugins/local/agent-manager/bin/space-picker.py"
 ```
 
 默认 prefix 是 `ctrl+b`，所以：
@@ -235,9 +230,9 @@ herdr server reload-config
  → 按对应按键执行操作：
      Enter       输入消息并发送，发送后仍回到 fzf 继续选择
      Ctrl + o    打开修改菜单：移动 workspace / 移动 tab / 重命名 / 设置 pane label
-     Alt + t     直接重命名当前 agent（title / 名称），跳过子菜单，完成后回到 fzf
-     Alt + l     直接设置当前 pane 的 label，跳过子菜单，完成后回到 fzf
-     Alt + n     以当前 agent 的 cwd 创建新 workspace（label 可留空），完成后回到 fzf
+     Ctrl + t     直接重命名当前 agent（title / 名称），跳过子菜单，完成后回到 fzf
+     Ctrl + l     直接设置当前 pane 的 label，跳过子菜单，完成后回到 fzf
+     Ctrl + n     以当前 agent 的 cwd 创建新 workspace（label 可留空），完成后回到 fzf
      Ctrl + r    快速重命名 agent，完成后回到 fzf
      Ctrl + f    聚焦 agent 并退出选择器
      Ctrl + x    关闭 agent 所在 pane（需确认），然后退出
@@ -262,9 +257,9 @@ herdr server reload-config
  → fzf 以树状列出 workspace → tab → agent/pane
  → 搜索 / 方向键选中任意层级
  → 按 Enter 聚焦该节点
- → 或按 Alt + t 直接重命名当前节点（agent 名称 / workspace / tab label）
- → 或按 Alt + l 直接设置当前 pane 的 label（仅 agent/pane 节点）
- → 或按 Alt + n 以当前节点目录创建新 workspace（label 可留空）
+ → 或按 Ctrl + t 直接重命名当前节点（agent 名称 / workspace / tab label）
+ → 或按 Ctrl + l 直接设置当前 pane 的 label（仅 agent/pane 节点）
+ → 或按 Ctrl + n 以当前节点目录创建新 workspace（label 可留空）
  → 或按 Ctrl + r 刷新树（重新拉取 snapshot，原地刷新，不退出选择器）
  → 或按 Ctrl + o 打开修改菜单：
      workspace 节点：Rename workspace / Close workspace
@@ -360,7 +355,7 @@ rm -rf ~/.config/herdr/plugins/local/agent-manager
 - Herdr 自带 popup 的标题不可自定义，所以这里使用 `type = "pane"`（临时 pane），并在脚本中调用 `herdr pane rename` 把弹出 pane 的 label 设置为 `agents` / `spaces`。副作用：这个 label 会留在触发快捷键的**源 pane** 上，选择器退出后不会自动恢复。如果在意，可手动 `herdr pane rename <pane_id> <原label>` 改回去。
 - 在一个有多个 pane 的 tab 里选中某个 pane 节点回车时，只能聚焦到该 tab（herdr CLI 的 `pane focus` 目前只支持 `--direction`，不支持按 pane_id 直接聚焦），无法精确切到具体的 pane。
 - 交互式输入（重命名 / 发消息 / 确认关闭）通过 `/dev/tty` 读取，以保证在 fzf 把 stdin 接管成管道时仍能正常输入；极少数无 `/dev/tty` 的环境会回退到 `stdin`，若 stdin 也不是 TTY 则会报错退出。
-- `Alt + t` / `Alt + l` 依赖终端把 `Alt+字母` 作为 `ESC+字母` 透传给 fzf。绝大多数终端默认即可；若你的终端把 `Alt+字母` 绑给了菜单/系统快捷键导致不生效，可在脚本里把 `alt-t` / `alt-l` 改成 `ctrl-t` / `ctrl-l`（注意别和终端的 redraw 冲突）。
+- `Ctrl + t` / `Ctrl + l` / `Ctrl + n` 都是普通 control 键，Linux 和 macOS 行为一致，不依赖终端的 `Alt`/`Option` 键模式。（早期的 `Alt+t`/`Alt+l`/`Alt+n` 已弃用，因为 macOS 的 Terminal.app / iTerm2 默认把 `Option` 当组合字符输入——`Option+t`→`†`、`Option+l`→`¬`、`Option+n`→`~`——按键根本传不到 fzf。）这些键放在 fzf 的 `--expect` 里，会覆盖其 fzf 默认绑定（`Ctrl+l`=清屏、`Ctrl+n`=下移），改为触发对应动作。
 - 移动 pane 到另一个 tab 时，如果源 tab 因此变空，herdr 会自动关闭该 tab（甚至会连带关闭空 workspace）；这是 herdr 自身行为，不是插件做的。`Move tab to workspace` 也依赖这个机制：源 tab 的 pane 全部移走后源 tab 自动关闭。
 - `Move tab to workspace` 在目标 workspace 新建一个 tab 来承接 pane，新建的 tab 会自带一个空 root pane，脚本会在搬完后自动 close 掉它，所以目标 tab 里只剩被搬过来的 pane。
 - **zoomed tab 里的 pane 无法移动**：herdr 会**静默拒绝**从处于缩放（zoomed）状态的 tab 里移动 pane——`herdr pane move` 返回成功（exit 0）但 `move_result.changed = false`、`reason = "zoomed_tab"`，pane 留在原地。**插件会自动处理**：移动前检测源 tab 是否 zoomed，是的话先 `herdr pane zoom <pane> --off` 取消缩放，再移动，所以你通常无需关心。极少数自动 unzoom 失败的情况，通知会提示 `source tab is zoomed and could not be unzoomed — unzoom it (herdr pane zoom <pane> --off) and retry`，手动 unzoom 后重试即可。
@@ -369,7 +364,7 @@ rm -rf ~/.config/herdr/plugins/local/agent-manager
   - `Move tab to workspace` 里部分 pane 移不动 → 通知 `Move partial: N moved, M stuck`；能移的照移，移不动的留在源 tab；如果一个都没移成功，会清理掉刚建的空目标 tab 并通知 `Move failed`
   - 想搬一个含"当前会话"的 tab：在那个 pane 里退出 kscc/claude（`/exit` 或 Ctrl+C），或从**另一个 pane** 启动 picker 去搬它；搬完后 pane 的 `pane_id` 会变（herdr 重新分配），这是正常现象。
 - **被移动过的 agent 会从 herdr 的 agent 注册表里"丢失"（显示为 `[detected]`）**：把一个跑着 claude/kscc 会话的 pane 移到别的 workspace 后，herdr 会重新分配 `pane_id` 并把它从 `agents` 数组（也就是 `herdr agent list`）里**丢掉**——会话还在跑（pane 上仍带有 `agent_session`），但 herdr 不再管理它。`prefix+w` 的树里它显示成 `◦ agent  <title>  [detected]`（而不是普通 `◦ pane`，也不是带 `idle/working` 状态的受管 agent）。这种 **detected（未受管）agent**：
-  - `herdr agent send / rename / focus` 对它**无效**（`agent_not_found`）。所以它的修改菜单**不提供** `Send message` / `Rename`；`Alt + t` 重命名会提示改用 `Alt + l` 设置 pane label；回车聚焦只能切到所在 tab（`herdr agent focus` 对未受管 agent 会失败，脚本已 try/except 兜底，tab 焦点照常生效）。
+  - `herdr agent send / rename / focus` 对它**无效**（`agent_not_found`）。所以它的修改菜单**不提供** `Send message` / `Rename`；`Ctrl + t` 重命名会提示改用 `Ctrl + l` 设置 pane label；回车聚焦只能切到所在 tab（`herdr agent focus` 对未受管 agent 会失败，脚本已 try/except 兜底，tab 焦点照常生效）。
   - `Set pane label` / `Move to workspace` / `Move to tab` / `Close` 仍可正常使用——这些走 `herdr pane ...`，不依赖 agent 注册表。
   - 这是 herdr 自身行为（移动后不重新注册 agent），插件只能识别并如实展示，无法把它变回受管 agent。想在 herdr 里重新"认领"它，目前没有对应命令；可在该 pane 里重启会话。
 - **`prefix + a` agent 选择器只列出 herdr 受管的 agent**：它基于 `herdr agent list`，因此上面那种"被移动后丢失"的 agent 在 `prefix + a` 里**不会出现**。要查看/操作这类 agent，用 `prefix + w` 的树状选择器（会以 `[detected]` 标出）。

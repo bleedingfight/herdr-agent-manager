@@ -16,8 +16,8 @@ A local plugin for [Herdr](https://herdr.dev) that lets you quickly search / sel
   - Right-side preview shows the agent's workspace, status, cwd, title, and the last 30 lines of colorized output
   - Once an agent is selected you can: send a message / change workspace / change tab / rename / set pane label / focus / close the pane
   - Agents with no explicit name fall back to their `terminal_id` as the label, so the list never crashes on a missing field
-  - Quick rename (skips the `Ctrl + o` sub-menu): `Alt + t` renames the current agent (title / name), `Alt + l` sets the current pane's label
-  - `Alt + n`: create a new workspace using the selected agent's cwd as the working directory (label optional; if left blank, herdr auto-names it from the cwd's basename)
+  - Quick rename (skips the `Ctrl + o` sub-menu): `Ctrl + t` renames the current agent (title / name), `Ctrl + l` sets the current pane's label
+  - `Ctrl + n`: create a new workspace using the selected agent's cwd as the working directory (label optional; if left blank, herdr auto-names it from the cwd's basename)
 
 - **Workspace/Space picker** (`prefix + w`)
   - Renders the `workspace → tab → agent/pane` hierarchy as a **tree**
@@ -25,8 +25,8 @@ A local plugin for [Herdr](https://herdr.dev) that lets you quickly search / sel
   - When you press Enter on an agent / pane node, it first runs `tab focus` on the containing tab, then `agent focus` on the pane, so you actually switch to it
   - Supported actions: focus, rename, set pane label, move, close, send message
   - Move capabilities: an agent / pane can move to **any tab in any workspace** (`Move to tab` now lists targets across all workspaces, options labeled `workspace / tab`); a whole tab can move to **another workspace** (`Move tab to workspace` — creates a target tab in the destination and moves all the source tab's panes over, then auto-closes the source tab)
-  - Quick rename (skips the `Ctrl + o` sub-menu): `Alt + t` renames the current node (agent name, or a workspace / tab label), `Alt + l` sets the current pane's label (agent/pane nodes only)
-  - `Alt + n`: create a new workspace using the current node's directory as the working directory. On an agent/pane it uses that pane's cwd; on a workspace/tab it uses the cwd of the focused pane inside it; label optional (if blank, herdr auto-names from the cwd basename). It does not auto-switch focus afterward — the new workspace appears in the refreshed tree; press Enter to focus it
+  - Quick rename (skips the `Ctrl + o` sub-menu): `Ctrl + t` renames the current node (agent name, or a workspace / tab label), `Ctrl + l` sets the current pane's label (agent/pane nodes only)
+  - `Ctrl + n`: create a new workspace using the current node's directory as the working directory. On an agent/pane it uses that pane's cwd; on a workspace/tab it uses the cwd of the focused pane inside it; label optional (if blank, herdr auto-names from the cwd basename). It does not auto-switch focus afterward — the new workspace appears in the refreshed tree; press Enter to focus it
   - `Ctrl + r`: manually re-render the tree in place (a fallback on top of the auto-refresh, for when you want to force a re-pull). The picker already **auto-refreshes live** (see below), so you usually don't need this
   - **Live auto-refresh**: while the picker is open, a background watcher thread checks the herdr state fingerprint (labels, ownership, and agent status of workspaces/tabs/panes) every 0.5s. If you edit / move / rename / create / close any pane or tab in **another pane**, the watcher detects the change and reloads the list with the latest tree via fzf's `--listen` socket — **no need to close and reopen, no keypress needed**. This solves the "I edited a pane but the picker still shows the old state" problem: when you come back to a still-open picker, the list is already up to date. Each reload re-runs `herdr api snapshot` (~3.6ms) + rebuilds the tree (~6ms) — accurate and smooth
   - Search **preserves the tree's nesting order**: the list is rendered with `--no-sort`, so typing a filter keyword **does not** re-rank by match score — a child node (e.g. `tab travel`) always stays right after its parent workspace (e.g. `travel-rule`) and never drifts to the top of the list detached from its parent just because it "matches better". So after moving a tab, searching its name shows it directly under the workspace it belongs to
@@ -92,11 +92,12 @@ single command — no manual clone or copy needed:
 herdr plugin install bleedingfight/herdr-agent-manager --yes
 ```
 
-herdr fetches the repo, places it under `~/.config/herdr/plugins/github/`,
-links it (plugin id: `local.agent-manager`), and reloads the config. Then add
-the keybindings (see [Configure keybindings](#configure-keybindings)) — prefer
-the `plugin_action` form, which is independent of the install path and keeps
-working across plugin updates — and reload once more:
+herdr fetches the repo, places it under
+`~/.config/herdr/plugins/github/local.agent-manager-<hash>/`, links it (plugin
+id: `local.agent-manager`), and reloads the config. Then add the keybindings
+(see [Configure keybindings](#configure-keybindings)) — use `type = "pane"`,
+NOT `plugin_action` (these pickers run raw `fzf`, which needs an interactive TTY
+that only `type = "pane"` provides) — and reload once more:
 
 ```bash
 herdr server reload-config
@@ -181,39 +182,31 @@ herdr plugin link ~/.config/herdr/plugins/local/agent-manager
 
 ## Configure keybindings
 
-Add to `~/.config/herdr/config.toml`. The recommended form is
-`type = "plugin_action"`, which references the plugin's action by id and does
-not depend on the install path — it works with both `herdr plugin install`
-and the local-clone install, and survives plugin updates:
+Add to `~/.config/herdr/config.toml`. **Use `type = "pane"`** (herdr opens a
+temporary pane and gives it an interactive TTY), NOT `type = "plugin_action"`:
+the pickers run raw `fzf`, which needs a TTY; under `plugin_action` herdr
+spawns the script without one and `fzf` hangs / never renders, so the shortcut
+silently does nothing. Point the command at the installed script's absolute
+path (herdr does not expand `~`):
+
+- `herdr plugin install` install: the script lives at
+  `~/.config/herdr/plugins/github/local.agent-manager-<hash>/bin/...` (find
+  the `<hash>` dir with `ls ~/.config/herdr/plugins/github/`; the hash is
+  stable across reinstalls, so the path survives updates).
+- local-clone install: `~/.config/herdr/plugins/local/agent-manager/bin/...`
 
 ```toml
 [[keys.command]]
 key = "prefix+a"
-type = "plugin_action"
-command = "local.agent-manager.picker"
+type = "pane"
+command = "/home/you/.config/herdr/plugins/github/local.agent-manager-<hash>/bin/agent-manager.py"
 description = "Pick agent and send message"
 
 [[keys.command]]
 key = "prefix+w"
-type = "plugin_action"
-command = "local.agent-manager.space-picker"
+type = "pane"
+command = "/home/you/.config/herdr/plugins/github/local.agent-manager-<hash>/bin/space-picker.py"
 description = "Pick workspace/space"
-```
-
-If you prefer to point at the scripts directly (e.g. for a local clone), use
-the absolute-path form instead. herdr does not expand `~`, so replace it with
-your real home directory:
-
-```toml
-[[keys.command]]
-key = "prefix+a"
-type = "pane"
-command = "/home/you/.config/herdr/plugins/local/agent-manager/bin/agent-manager.py"
-
-[[keys.command]]
-key = "prefix+w"
-type = "pane"
-command = "/home/you/.config/herdr/plugins/local/agent-manager/bin/space-picker.py"
 ```
 
 The default prefix is `ctrl+b`, so:
@@ -240,9 +233,9 @@ Press ctrl+b a
  → press the matching key to act:
      Enter       type a message and send it; returns to fzf to keep selecting
      Ctrl + o    open the modify menu: move workspace / move tab / rename / set pane label
-     Alt + t     rename the current agent (title / name) directly, skipping the sub-menu; returns to fzf when done
-     Alt + l     set the current pane's label directly, skipping the sub-menu; returns to fzf when done
-     Alt + n     create a new workspace from the current agent's cwd (label optional); returns to fzf when done
+     Ctrl + t     rename the current agent (title / name) directly, skipping the sub-menu; returns to fzf when done
+     Ctrl + l     set the current pane's label directly, skipping the sub-menu; returns to fzf when done
+     Ctrl + n     create a new workspace from the current agent's cwd (label optional); returns to fzf when done
      Ctrl + r    quick-rename the agent; returns to fzf when done
      Ctrl + f    focus the agent and exit the picker
      Ctrl + x    close the agent's pane (asks for confirmation), then exit
@@ -267,9 +260,9 @@ Press ctrl+b w
  → fzf lists workspace → tab → agent/pane as a tree
  → search / arrow-select any level
  → press Enter to focus that node
- → or Alt + t to rename the current node directly (agent name / workspace / tab label)
- → or Alt + l to set the current pane's label (agent/pane nodes only)
- → or Alt + n to create a new workspace from the current node's directory (label optional)
+ → or Ctrl + t to rename the current node directly (agent name / workspace / tab label)
+ → or Ctrl + l to set the current pane's label (agent/pane nodes only)
+ → or Ctrl + n to create a new workspace from the current node's directory (label optional)
  → or Ctrl + r to refresh the tree (re-pulls the snapshot, refreshes in place, doesn't exit the picker)
  → or Ctrl + o to open the modify menu:
      workspace node: Rename workspace / Close workspace
@@ -365,7 +358,7 @@ Then remove the matching `[[keys.command]]` blocks from `~/.config/herdr/config.
 - Herdr's built-in popup title isn't customizable, so this uses `type = "pane"` (a temporary pane) and calls `herdr pane rename` in the script to set the popup pane's label to `agents` / `spaces`. Side effect: this label sticks to the **source pane** that triggered the shortcut and isn't restored automatically after the picker exits. If that bothers you, manually `herdr pane rename <pane_id> <original_label>` to put it back.
 - When you press Enter on a pane node inside a tab that has multiple panes, it can only focus the tab (herdr CLI's `pane focus` currently supports only `--direction`, not focusing by pane_id) — it can't switch precisely to a specific pane.
 - Interactive input (rename / send message / confirm close) is read from `/dev/tty` so it still works when fzf takes over stdin as a pipe. In the rare environment with no `/dev/tty` it falls back to `stdin`; if stdin isn't a TTY either, it errors out.
-- `Alt + t` / `Alt + l` rely on the terminal passing `Alt+letter` through to fzf as `ESC+letter`. Most terminals do this by default; if your terminal binds `Alt+letter` to a menu / system shortcut so it doesn't work, you can change `alt-t` / `alt-l` to `ctrl-t` / `ctrl-l` in the script (mind conflicts with the terminal's redraw).
+- `Ctrl + t` / `Ctrl + l` / `Ctrl + n` are plain control keys, so they work identically on Linux and macOS with no dependence on the terminal's `Alt`/`Option` key mode. (The earlier `Alt+t`/`Alt+l`/`Alt+n` bindings were replaced because macOS Terminal.app and iTerm2 default `Option` to compose chars — `Option+t` → `†`, `Option+l` → `¬`, `Option+n` → `~` — so the keystroke never reached fzf.) These keys are listed in fzf's `--expect`, which overrides their fzf defaults (`Ctrl+l` = clear-screen, `Ctrl+n` = down) so they trigger the action instead.
 - When moving a pane to another tab, if the source tab becomes empty herdr auto-closes that tab (and may even close an empty workspace). This is herdr's own behavior, not the plugin's. `Move tab to workspace` relies on this too: once all panes leave the source tab it auto-closes.
 - `Move tab to workspace` creates a new tab in the target workspace to receive the panes; the new tab comes with an empty root pane, which the script auto-closes after the move, so only the moved panes remain in the target tab.
 - **Panes inside a zoomed tab can't be moved**: herdr **silently refuses** to move a pane out of a zoomed tab — `herdr pane move` returns success (exit 0) but `move_result.changed = false` and `reason = "zoomed_tab"`, leaving the pane in place. **The plugin handles this automatically**: before moving it checks whether the source tab is zoomed, and if so runs `herdr pane zoom <pane> --off` to unzoom first, then moves — so you usually don't need to care. In the rare case auto-unzoom fails, the notification says `source tab is zoomed and could not be unzoomed — unzoom it (herdr pane zoom <pane> --off) and retry`; manually unzoom and retry.
@@ -374,7 +367,7 @@ Then remove the matching `[[keys.command]]` blocks from `~/.config/herdr/config.
   - Some panes stuck during `Move tab to workspace` → notification `Move partial: N moved, M stuck`; the ones that can move do, the stuck ones stay in the source tab; if none moved, it cleans up the just-created empty target tab and notifies `Move failed`
   - To move a tab that contains the "current session": exit kscc/claude in that pane (`/exit` or Ctrl+C), or launch the picker from **another pane** to move it; after the move the pane's `pane_id` changes (herdr reassigns it) — that's normal.
 - **A moved agent is "lost" from herdr's agent registry (shown as `[detected]`)**: after you move a pane running a claude/kscc session to another workspace, herdr reassigns the `pane_id` and **drops** it from the `agents` array (i.e. `herdr agent list`) — the session is still running (the pane still carries `agent_session`), but herdr no longer manages it. In the `prefix+w` tree it shows as `◦ agent  <title>  [detected]` (rather than a plain `◦ pane`, and not a managed agent with an `idle/working` status). Such a **detected (unmanaged) agent**:
-  - `herdr agent send / rename / focus` are **ineffective** on it (`agent_not_found`). So its modify menu **does not offer** `Send message` / `Rename`; `Alt + t` rename prompts you to use `Alt + l` to set the pane label instead; pressing Enter to focus only switches to the containing tab (`herdr agent focus` fails on an unmanaged agent; the script try/exceptes it, and the tab focus still takes effect).
+  - `herdr agent send / rename / focus` are **ineffective** on it (`agent_not_found`). So its modify menu **does not offer** `Send message` / `Rename`; `Ctrl + t` rename prompts you to use `Ctrl + l` to set the pane label instead; pressing Enter to focus only switches to the containing tab (`herdr agent focus` fails on an unmanaged agent; the script try/exceptes it, and the tab focus still takes effect).
   - `Set pane label` / `Move to workspace` / `Move to tab` / `Close` still work — these go through `herdr pane ...` and don't depend on the agent registry.
   - This is herdr's own behavior (it doesn't re-register the agent after a move); the plugin can only recognize and display it faithfully, and cannot turn it back into a managed agent. There's currently no command to "re-claim" it in herdr; you can restart the session in that pane.
 - **The `prefix + a` agent picker lists only herdr-managed agents**: it's based on `herdr agent list`, so the "moved and lost" agents above **do not appear** in `prefix + a`. To view / act on such agents, use the `prefix + w` tree picker (they're marked `[detected]`).
