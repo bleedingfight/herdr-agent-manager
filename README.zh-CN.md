@@ -16,16 +16,16 @@
   - 右侧预览 agent 的 workspace、状态、cwd、标题 以及最近 30 行彩色输出
   - 选中后可以执行多种操作：发消息 / 修改 workspace / 修改 tab / 重命名 / 设置 pane label / 聚焦 / 关闭 pane
   - 没有 explicit name 的 agent 会自动回退用 `terminal_id` 作为标识，列表不会因缺字段而崩溃
-  - 快捷重命名（跳过 `Alt + m` 子菜单）：`Alt + t` 直接重命名当前 agent（title / 名称），`Alt + l` 直接设置当前 pane 的 label
+  - 快捷重命名（跳过 `Ctrl + o` 子菜单）：`Alt + t` 直接重命名当前 agent（title / 名称），`Alt + l` 直接设置当前 pane 的 label
   - `Alt + n`：以当前选中 agent 的 cwd 为工作目录创建一个新 workspace（label 可留空，留空时 herdr 会用 cwd 的 basename 自动命名）
 
 - **Workspace/Space 选择器** (`prefix + w`)
   - 以**树状层次结构**展示 `workspace → tab → agent/pane`
-  - 选中任意层级（workspace / tab / agent / pane）后按 `Enter` 聚焦该节点，按 `Alt + m` 打开修改菜单
+  - 选中任意层级（workspace / tab / agent / pane）后按 `Enter` 聚焦该节点，按 `Ctrl + o` 打开修改菜单
   - 选中 agent / pane 节点回车时，会先 `tab focus` 到所在 tab，再 `agent focus` 到对应 pane，确保真正切换过去
   - 支持操作：聚焦、重命名、设置 pane label、移动、关闭、发送消息
   - 移动能力：agent / pane 可移动到**任意 workspace 的任意 tab**（`Move to tab` 现在跨 workspace 列出目标，选项里标了 `workspace / tab`）；整个 tab 可移动到**其他 workspace**（`Move tab to workspace`，内部新建目标 tab 并把源 tab 的所有 pane 搬过去，源 tab 自动关闭）
-  - 快捷重命名（跳过 `Alt + m` 子菜单）：`Alt + t` 直接重命名当前节点（agent 名称，或 workspace / tab 的 label），`Alt + l` 直接设置当前 pane 的 label（仅 agent/pane 节点）
+  - 快捷重命名（跳过 `Ctrl + o` 子菜单）：`Alt + t` 直接重命名当前节点（agent 名称，或 workspace / tab 的 label），`Alt + l` 直接设置当前 pane 的 label（仅 agent/pane 节点）
   - `Alt + n`：以当前光标所在节点的目录为工作目录创建一个新 workspace。光标在 agent/pane 上取该 pane 的 cwd，在 workspace/tab 上取其内部 focused pane 的 cwd；label 可留空（留空时 herdr 用 cwd 的 basename 自动命名）。创建后不自动切换焦点，新 workspace 会出现在刷新后的树里，按 Enter 即可聚焦
   - `Ctrl + r`：手动原地刷新树（在自动刷新之上的兜底，比如你想立刻强制重拉一次）。选择器本身已**自动实时刷新**（见下），通常无需手动按。
   - **自动实时刷新**：picker 打开期间有一个后台 watcher 线程，每 0.5 秒检查一次 herdr 状态指纹（workspaces/tabs/panes 的 label、归属、agent 状态）。你在**别的 pane** 里编辑/移动/重命名/新建/关闭了任何 pane 或 tab，watcher 检测到变化后会通过 fzf 的 `--listen` socket 自动让列表 reload 最新树——**不用关重开、不用按键**。这是为了解决"编辑完一个 pane，picker 还显示旧状态"的问题：回到还开着的 picker，列表已经是新的了。每次 reload 都重新调 `herdr api snapshot`（~3.6ms）+ 重建树（~6ms），准确且不卡。
@@ -234,7 +234,7 @@ herdr server reload-config
  → 搜索 / 方向键选中
  → 按对应按键执行操作：
      Enter       输入消息并发送，发送后仍回到 fzf 继续选择
-     Alt + m    打开修改菜单：移动 workspace / 移动 tab / 重命名 / 设置 pane label
+     Ctrl + o    打开修改菜单：移动 workspace / 移动 tab / 重命名 / 设置 pane label
      Alt + t     直接重命名当前 agent（title / 名称），跳过子菜单，完成后回到 fzf
      Alt + l     直接设置当前 pane 的 label，跳过子菜单，完成后回到 fzf
      Alt + n     以当前 agent 的 cwd 创建新 workspace（label 可留空），完成后回到 fzf
@@ -266,7 +266,7 @@ herdr server reload-config
  → 或按 Alt + l 直接设置当前 pane 的 label（仅 agent/pane 节点）
  → 或按 Alt + n 以当前节点目录创建新 workspace（label 可留空）
  → 或按 Ctrl + r 刷新树（重新拉取 snapshot，原地刷新，不退出选择器）
- → 或按 Alt + m 打开修改菜单：
+ → 或按 Ctrl + o 打开修改菜单：
      workspace 节点：Rename workspace / Close workspace
      tab 节点：Rename tab / Move tab to workspace / Close tab
      agent/pane 节点：Send message / Rename / Set pane label / Move to workspace / Move to tab / Close

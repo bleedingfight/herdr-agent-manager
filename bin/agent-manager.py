@@ -6,11 +6,14 @@ import subprocess
 import sys
 
 HERDR = os.environ.get("HERDR_BIN_PATH", "herdr")
-# We use Alt-M for "edit/modify". Avoid Ctrl-E: herdr's herdr-navigator plugin
+# We use Ctrl-O for "edit/modify". Avoid Ctrl-E: herdr's herdr-navigator plugin
 # binds Ctrl-E globally to termscope.open-links, so the keystroke is captured
 # before it ever reaches fzf's --expect and the modify menu never opens.
-# (Ctrl-M would also be wrong — it's indistinguishable from Enter in terminals.)
-MODIFY_KEY = "alt-m"
+# Avoid Alt-* on macOS: Terminal.app/iTerm2 default Option to compose chars
+# (Option+m -> µ), so the key never reaches fzf unless "Option as Meta" is on.
+# Ctrl-O is a plain control key — works on every macOS terminal, and is free in
+# both herdr's default config and fzf's default bindings.
+MODIFY_KEY = "ctrl-o"
 
 
 def normalize_agent(a):
