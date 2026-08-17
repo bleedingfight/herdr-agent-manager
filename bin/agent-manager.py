@@ -355,9 +355,10 @@ def pick_workspace_for_new():
 def create_agent(agent):
     # ctrl-n: start a new agent via `herdr agent start` in a chosen workspace.
     # Defaults are pre-filled and editable: argv defaults to `opencode`, cwd
-    # defaults to the selected agent's cwd, name defaults to basename(argv).
+    # defaults to the selected agent's cwd (or the process cwd when there is
+    # no selected agent — e.g. the empty list case), name defaults to basename(argv).
     # Supports --env KEY=VALUE for agents that need env vars (e.g. opencode).
-    default_cwd = agent.get("cwd") or os.getcwd()
+    default_cwd = (agent.get("cwd") if agent else None) or os.getcwd()
 
     # 1. command to run (argv) — default opencode, editable
     argv_str = prompt_prefill("Command to run (argv): ", "opencode")
@@ -427,13 +428,17 @@ def main():
 
     while True:
         agents = list_agents()
-        if not agents:
-            print("No agents found")
-            break
+        empty = not agents
 
         name, action = pick_agent(agents)
-        agent = next((a for a in agents if a["name"] == name), None)
-        if agent is None:
+        agent = next((a for a in agents if a["name"] == name), None) if not empty else None
+        # On an empty list only "create a new agent" (ctrl-n) is meaningful;
+        # send/rename/focus/close all need a selected agent, so steer the user
+        # to ctrl-n instead of crashing on the None agent.
+        if empty and action != "ctrl-n":
+            notify("No agents", "press ctrl-n (new-agent) to create one, esc to quit")
+            continue
+        if not empty and agent is None:
             print(f"agent '{name}' not found")
             continue
 
