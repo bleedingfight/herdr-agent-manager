@@ -26,7 +26,7 @@
   - 支持操作：聚焦、重命名、设置 pane label、移动、关闭、发送消息
   - 移动能力：agent / pane 可移动到**任意 workspace 的任意 tab**（`Move to tab` 现在跨 workspace 列出目标，选项里标了 `workspace / tab`）；整个 tab 可移动到**其他 workspace**（`Move tab to workspace`，内部新建目标 tab 并把源 tab 的所有 pane 搬过去，源 tab 自动关闭）
   - 快捷重命名（跳过 `Ctrl + o` 子菜单）：`Ctrl + t` 直接重命名当前节点（agent 名称，或 workspace / tab 的 label），`Ctrl + l` 直接设置当前 pane 的 label（仅 agent/pane 节点）
-  - `Ctrl + n`：以当前光标所在节点的目录为工作目录创建一个新 workspace。光标在 agent/pane 上取该 pane 的 cwd，在 workspace/tab 上取其内部 focused pane 的 cwd；label 可留空（留空时 herdr 用 cwd 的 basename 自动命名）。创建后不自动切换焦点，新 workspace 会出现在刷新后的树里，按 Enter 即可聚焦
+  - `Ctrl + n`：创建一个新 workspace，工作目录**默认取当前目录**并预填到输入框中——直接回车确认，或改写成其他路径；label 可留空（留空时 herdr 用所选 cwd 的 basename 自动命名）。创建后不自动切换焦点，新 workspace 会出现在刷新后的树里，按 Enter 即可聚焦
   - `Ctrl + r`：手动原地刷新树（在自动刷新之上的兜底，比如你想立刻强制重拉一次）。选择器本身已**自动实时刷新**（见下），通常无需手动按。
   - **自动实时刷新**：picker 打开期间有一个后台 watcher 线程，每 0.5 秒检查一次 herdr 状态指纹（workspaces/tabs/panes 的 label、归属、agent 状态）。你在**别的 pane** 里编辑/移动/重命名/新建/关闭了任何 pane 或 tab，watcher 检测到变化后会通过 fzf 的 `--listen` socket 自动让列表 reload 最新树——**不用关重开、不用按键**。这是为了解决"编辑完一个 pane，picker 还显示旧状态"的问题：回到还开着的 picker，列表已经是新的了。每次 reload 都重新调 `herdr api snapshot`（~3.6ms）+ 重建树（~6ms），准确且不卡。
   - 搜索时**保持树状嵌套顺序**：列表用 `--no-sort` 渲染，输入关键词筛选时**不会**按匹配度重排——子节点（如 `tab travel`）始终紧跟其父 workspace（如 `travel-rule`）之后，不会因为"匹配度更高"而漂到列表最上方脱离父节点。这样移动完一个 tab 后搜它的名字，能直接在它所属 workspace 下方看到它
@@ -259,7 +259,7 @@ herdr server reload-config
  → 按 Enter 聚焦该节点
  → 或按 Ctrl + t 直接重命名当前节点（agent 名称 / workspace / tab label）
  → 或按 Ctrl + l 直接设置当前 pane 的 label（仅 agent/pane 节点）
- → 或按 Ctrl + n 以当前节点目录创建新 workspace（label 可留空）
+ → 或按 Ctrl + n 创建新 workspace（cwd 默认取当前目录并预填、可编辑；label 可留空）
  → 或按 Ctrl + r 刷新树（重新拉取 snapshot，原地刷新，不退出选择器）
  → 或按 Ctrl + o 打开修改菜单：
      workspace 节点：Rename workspace / Close workspace

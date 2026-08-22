@@ -24,8 +24,12 @@ def set_title(title):
     pane_id = os.environ.get("HERDR_PANE_ID")
     if pane_id:
         try:
-            subprocess.run([HERDR, "pane", "rename", pane_id, title],
-                           capture_output=True, text=True, check=False)
+            subprocess.run(
+                [HERDR, "pane", "rename", pane_id, title],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
         except Exception:
             pass
 
@@ -47,9 +51,19 @@ def move_pane(pane_id, *, tab_id=None, new_tab_workspace_id=None, split="right")
     src_tab_id = _unzoom_source_tab(pane_id)
     try:
         if tab_id:
-            r = herdr("pane", "move", pane_id, "--tab", tab_id, "--split", split, "--no-focus")
+            r = herdr(
+                "pane", "move", pane_id, "--tab", tab_id, "--split", split, "--no-focus"
+            )
         else:
-            r = herdr("pane", "move", pane_id, "--new-tab", "--workspace", new_tab_workspace_id, "--no-focus")
+            r = herdr(
+                "pane",
+                "move",
+                pane_id,
+                "--new-tab",
+                "--workspace",
+                new_tab_workspace_id,
+                "--no-focus",
+            )
         mr = json.loads(r)["result"]["move_result"]
         changed = mr.get("changed", False)
         if changed:
@@ -78,7 +92,9 @@ def _unzoom_source_tab(pane_id):
         if not pane:
             return None
         src_tab_id = pane.get("tab_id")
-        layout = next((l for l in snap.get("layouts", []) if l.get("tab_id") == src_tab_id), None)
+        layout = next(
+            (l for l in snap.get("layouts", []) if l.get("tab_id") == src_tab_id), None
+        )
         if layout and layout.get("zoomed"):
             herdr("pane", "zoom", pane_id, "--off")
         return src_tab_id
@@ -95,11 +111,17 @@ def _refusal_reason(pane_id):
         if tgt is None:
             return "herdr refused to move this pane"
         if cur and pane_id == cur:
-            return "this is the picker's own pane — it can't move while the picker is open"
+            return (
+                "this is the picker's own pane — it can't move while the picker is open"
+            )
         if tgt.get("agent_session"):
-            return ("this pane is the active kscc/claude session you're in right now "
-                    "— exit/stop it first, or move it from a different pane")
-        return "herdr refused to move this pane (it may be running a foreground process)"
+            return (
+                "this pane is the active kscc/claude session you're in right now "
+                "— exit/stop it first, or move it from a different pane"
+            )
+        return (
+            "herdr refused to move this pane (it may be running a foreground process)"
+        )
     except Exception:
         return "herdr refused to move this pane"
 
@@ -123,21 +145,46 @@ def notify(title, body=""):
         pass
 
 
-def prompt(question):
+def prompt(question, default=""):
     # Read from /dev/tty so interactive input works even when stdin is a pipe
     # (fzf is launched with capture_output=True, leaving stdin non-TTY).
+    #
+    # When a `default` value is given, pre-fill it into the input line via the
+    # readline module (only when stdin is a real TTY, where readline's startup
+    # hook works). This lets the user EDIT the default inline, or just press
+    # Enter to accept it as-is.
+    if default:
+        try:
+            import readline
+        except ImportError:
+            readline = None
+        if readline is not None and sys.stdin.isatty():
+            readline.set_startup_hook(lambda: readline.insert_text(default))
+            try:
+                return input(question).strip() or default
+            finally:
+                readline.set_startup_hook(None)
     try:
         with open("/dev/tty", "r+") as tty:
             tty.write(question)
             tty.flush()
-            return tty.readline().strip()
+            line = tty.readline().strip()
+            if line:
+                return line
+            return default
     except OSError:
         if not sys.stdin.isatty():
             sys.exit("stdin is not a TTY and /dev/tty unavailable")
-        return input(question).strip()
+        return input(question).strip() or default
 
 
-def fzf_select(options, header=None, prompt_text="> ", colors="bg+:#3b4261,fg+:#ffffff", expect_keys=None):
+def fzf_select(
+    options,
+    header=None,
+    prompt_text="> ",
+    colors="bg+:#3b4261,fg+:#ffffff",
+    expect_keys=None,
+):
     args = ["fzf", "--no-sort", "--prompt", prompt_text, "--color", colors]
     if header:
         args.extend(["--header", header])
@@ -225,18 +272,28 @@ def build_tree(snapshot):
                     # Show the pane label as the title; drop it when it just
                     # duplicates the name (synthesized agents whose name IS the
                     # terminal title and whose label is empty).
-                    title = pane.get("label") or agent.get("terminal_title_stripped", "")
+                    title = pane.get("label") or agent.get(
+                        "terminal_title_stripped", ""
+                    )
                     suffix = f"  {title}" if title and title != name else ""
-                    lines.append(f"agent:{pane_id}|    ◦ agent  {name}  [{status}]{suffix}")
+                    lines.append(
+                        f"agent:{pane_id}|    ◦ agent  {name}  [{status}]{suffix}"
+                    )
                 else:
-                    title = pane.get("label") or pane.get("terminal_title_stripped", "") or "pane"
+                    title = (
+                        pane.get("label")
+                        or pane.get("terminal_title_stripped", "")
+                        or "pane"
+                    )
                     lines.append(f"pane:{pane_id}|    ◦ pane  {title}")
     return lines
 
 
 def lookup(snapshot, typ, id_):
     if typ == "workspace":
-        return next((w for w in snapshot["workspaces"] if w["workspace_id"] == id_), None)
+        return next(
+            (w for w in snapshot["workspaces"] if w["workspace_id"] == id_), None
+        )
     if typ == "tab":
         return next((t for t in snapshot["tabs"] if t["tab_id"] == id_), None)
     if typ in ("agent", "pane"):
@@ -251,13 +308,15 @@ def pick_target_workspace(snapshot, exclude_workspace_id=None):
     # can't pick a no-op target — moving a pane to its own workspace (new tab)
     # is a silent herdr no-op, which reads as "move didn't take effect".
     lines = [
-        f"{w['workspace_id']}|{w.get('label','-')}  ({w['workspace_id']})"
+        f"{w['workspace_id']}|{w.get('label', '-')}  ({w['workspace_id']})"
         for w in snapshot["workspaces"]
         if w["workspace_id"] != exclude_workspace_id
     ]
     if not lines:
         return None
-    selected, _ = fzf_select(lines, header="select target workspace", prompt_text="workspace> ")
+    selected, _ = fzf_select(
+        lines, header="select target workspace", prompt_text="workspace> "
+    )
     if selected is None:
         return None
     return selected.split("|")[0]
@@ -272,15 +331,18 @@ def pick_target_tab_anywhere(snapshot, exclude_tab_id=None):
     for w in sorted(snapshot["workspaces"], key=lambda w: w.get("number", 0)):
         ws_label = w.get("label", "-")
         tabs = sorted(
-            [t for t in snapshot["tabs"]
-             if t.get("workspace_id") == w["workspace_id"]
-             and t["tab_id"] != exclude_tab_id],
+            [
+                t
+                for t in snapshot["tabs"]
+                if t.get("workspace_id") == w["workspace_id"]
+                and t["tab_id"] != exclude_tab_id
+            ],
             key=lambda t: t.get("number", 0),
         )
         for t in tabs:
             lines.append(
-                f"{t['tab_id']}|{ws_label} / {t.get('label','-')}  "
-                f"({t.get('pane_count',0)} panes)"
+                f"{t['tab_id']}|{ws_label} / {t.get('label', '-')}  "
+                f"({t.get('pane_count', 0)} panes)"
             )
     if not lines:
         return None
@@ -329,12 +391,15 @@ def move_tab_to_workspace(snapshot, src_tab_id):
 
     moved, skipped = [], []
     for p in src_panes:
-        changed, err = move_pane(p["pane_id"], tab_id=new_tab_id,
-                                split="down" if moved else "right")
+        changed, err = move_pane(
+            p["pane_id"], tab_id=new_tab_id, split="down" if moved else "right"
+        )
         if changed:
             moved.append(p["pane_id"])
         else:
-            skipped.append((p["pane_id"], err or "herdr refused (likely an active agent pane)"))
+            skipped.append(
+                (p["pane_id"], err or "herdr refused (likely an active agent pane)")
+            )
 
     # Drop the empty root pane the new tab started with — but only if we
     # actually moved something into the tab; otherwise the tab is just the
@@ -352,12 +417,13 @@ def move_tab_to_workspace(snapshot, src_tab_id):
         except Exception:
             pass
         sample = skipped[0]
-        notify("Move failed",
-               f"no panes moved. {sample[0]}: {sample[1]}")
+        notify("Move failed", f"no panes moved. {sample[0]}: {sample[1]}")
     elif skipped:
-        notify("Move partial",
-               f"{len(moved)} moved, {len(skipped)} stuck. "
-               f"Stuck: {', '.join(s[0] for s in skipped)} (see notification for why)")
+        notify(
+            "Move partial",
+            f"{len(moved)} moved, {len(skipped)} stuck. "
+            f"Stuck: {', '.join(s[0] for s in skipped)} (see notification for why)",
+        )
     else:
         notify("Tab moved", f"{src_tab_id} → workspace {ws_id} ({len(moved)} panes)")
 
@@ -424,9 +490,11 @@ def modify(snapshot, typ, id_):
                     herdr("agent", "rename", agent["name"], new)
                     notify("Agent renamed", f"{agent['name']} → {new}")
             else:
-                notify("Cannot rename",
-                       "This is a live agent session herdr doesn't manage (likely moved). "
-                       "Use Alt+l to set the pane label instead.")
+                notify(
+                    "Cannot rename",
+                    "This is a live agent session herdr doesn't manage (likely moved). "
+                    "Use Alt+l to set the pane label instead.",
+                )
         elif sel == "Set pane label":
             cur = pane.get("label") or pane.get("terminal_title_stripped", "")
             new = prompt(f"Set label for pane {id_} (current: {cur}): ")
@@ -434,7 +502,9 @@ def modify(snapshot, typ, id_):
                 herdr("pane", "rename", id_, new)
                 notify("Pane label set", f"{id_} → {new}")
         elif sel == "Move to workspace":
-            ws_id = pick_target_workspace(snapshot, exclude_workspace_id=pane.get("workspace_id"))
+            ws_id = pick_target_workspace(
+                snapshot, exclude_workspace_id=pane.get("workspace_id")
+            )
             if ws_id:
                 changed, err = move_pane(id_, new_tab_workspace_id=ws_id)
                 if changed:
@@ -442,7 +512,9 @@ def modify(snapshot, typ, id_):
                 else:
                     notify("Move failed", err or "herdr refused (active agent pane?)")
         elif sel == "Move to tab":
-            tab_id = pick_target_tab_anywhere(snapshot, exclude_tab_id=pane.get("tab_id"))
+            tab_id = pick_target_tab_anywhere(
+                snapshot, exclude_tab_id=pane.get("tab_id")
+            )
             if tab_id:
                 changed, err = move_pane(id_, tab_id=tab_id)
                 if changed:
@@ -509,9 +581,11 @@ def rename_node(snapshot, typ, id_):
                 herdr("agent", "rename", agent["name"], new)
                 notify("Agent renamed", f"{agent['name']} → {new}")
         else:
-            notify("Cannot rename",
-                   "This is a live agent session herdr doesn't manage (likely moved). "
-                   "Use Alt+l to set the pane label instead.")
+            notify(
+                "Cannot rename",
+                "This is a live agent session herdr doesn't manage (likely moved). "
+                "Use Alt+l to set the pane label instead.",
+            )
 
 
 def set_node_pane_label(snapshot, typ, id_):
@@ -529,35 +603,15 @@ def set_node_pane_label(snapshot, typ, id_):
         notify("Pane label set", f"{id_} → {new}")
 
 
-def resolve_cwd(snapshot, typ, id_):
-    # Pick the working directory of the pane "at" the selected node, so the new
-    # workspace inherits a sensible cwd. agent/pane → that pane; tab/workspace →
-    # the focused pane inside it (else the first one).
-    pane = None
-    if typ in ("agent", "pane"):
-        pane = next((p for p in snapshot["panes"] if p["pane_id"] == id_), None)
-    elif typ == "tab":
-        panes = [p for p in snapshot["panes"] if p.get("tab_id") == id_]
-        pane = next((p for p in panes if p.get("focused")), None) or (panes[0] if panes else None)
-    elif typ == "workspace":
-        panes = [p for p in snapshot["panes"] if p.get("workspace_id") == id_]
-        pane = next((p for p in panes if p.get("focused")), None) or (panes[0] if panes else None)
-    cwd = pane.get("cwd") if pane else None
-    if not cwd:
-        fp = next((p for p in snapshot["panes"] if p.get("pane_id") == snapshot.get("focused_pane_id")), None)
-        cwd = fp.get("cwd") if fp else None
-    if not cwd:
-        try:
-            cwd = json.loads(herdr("pane", "current"))["result"]["pane"].get("cwd")
-        except Exception:
-            pass
-    return cwd or os.getcwd()
-
-
 def new_workspace(snapshot, typ, id_):
-    # ctrl-n: create a workspace whose cwd is the selected node's directory.
-    cwd = resolve_cwd(snapshot, typ, id_)
-    label = prompt(f"New workspace label (optional). cwd: {cwd}: ")
+    # ctrl-n: create a new workspace. The cwd defaults to the CURRENT directory
+    # and is pre-filled into the prompt so the user can either press Enter to
+    # keep it or edit it to point elsewhere. Label is optional.
+    default_cwd = os.getcwd()
+    cwd = prompt(f"New workspace cwd (default: {default_cwd}): ", default=default_cwd)
+    if not cwd:
+        cwd = default_cwd
+    label = prompt("New workspace label (optional): ")
     args = ["workspace", "create", "--cwd", cwd, "--no-focus"]
     if label:
         args.extend(["--label", label])
@@ -598,8 +652,16 @@ def _snapshot_fingerprint():
     for t in sorted(snap["tabs"], key=lambda t: t.get("tab_id")):
         parts.append(("tab", t["tab_id"], t.get("workspace_id"), t.get("label")))
     for p in sorted(snap["panes"], key=lambda p: p.get("pane_id")):
-        parts.append(("pane", p["pane_id"], p.get("tab_id"), p.get("label"),
-                      bool(p.get("agent_session")), p.get("terminal_title_stripped")))
+        parts.append(
+            (
+                "pane",
+                p["pane_id"],
+                p.get("tab_id"),
+                p.get("label"),
+                bool(p.get("agent_session")),
+                p.get("terminal_title_stripped"),
+            )
+        )
     for a in sorted(snap.get("agents", []), key=lambda a: a.get("pane_id") or ""):
         parts.append(("agent", a.get("pane_id"), a.get("name"), a.get("agent_status")))
     return repr(parts)
@@ -615,8 +677,12 @@ def _fzf_listen_reload(sock_path, self_path):
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         s.settimeout(1.0)
         s.connect(sock_path)
-        s.send(b"POST / HTTP/1.0\r\nContent-Length: " + str(len(body)).encode()
-               + b"\r\n\r\n" + body)
+        s.send(
+            b"POST / HTTP/1.0\r\nContent-Length: "
+            + str(len(body)).encode()
+            + b"\r\n\r\n"
+            + body
+        )
         try:
             s.recv(64)
         except socket.timeout:
@@ -666,8 +732,8 @@ def main():
     sock_path = os.path.join(listen_dir, "listen.sock")
     stop_event = threading.Event()
     watcher = threading.Thread(
-        target=_start_watcher, args=(sock_path, self_path, stop_event),
-        daemon=True)
+        target=_start_watcher, args=(sock_path, self_path, stop_event), daemon=True
+    )
 
     try:
         while True:
@@ -691,9 +757,11 @@ def main():
             lines = [header_line] + tree_lines
 
             set_title("spaces")
-            fzf_header = (f"spaces tree — enter:focus  {MODIFY_KEY}:modify  "
-                         f"ctrl-t:title  ctrl-l:label  ctrl-n:new-ws  "
-                         f"ctrl-r:refresh  esc:quit")
+            fzf_header = (
+                f"spaces tree — enter:focus  {MODIFY_KEY}:modify  "
+                f"ctrl-t:title  ctrl-l:label  ctrl-n:new-ws  "
+                f"ctrl-r:refresh  esc:quit"
+            )
             # ctrl-r reloads the tree in place from a fresh snapshot (manual refresh
             # on top of the automatic watcher-driven refresh).
             reload_bind = f"ctrl-r:reload(python3 '{self_path}' --dump-tree)"
@@ -710,35 +778,45 @@ def main():
             # those would silently change the picker's fzf behavior. Stripping them
             # makes the picker's fzf obey ONLY the explicit flags below — so the
             # workspace→tab→pane order is deterministic regardless of the shell env.
-            fzf_env = {k: v for k, v in os.environ.items()
-                       if k not in ("FZF_DEFAULT_OPTS", "FZF_DEFAULT_COMMAND")}
+            fzf_env = {
+                k: v
+                for k, v in os.environ.items()
+                if k not in ("FZF_DEFAULT_OPTS", "FZF_DEFAULT_COMMAND")
+            }
             fzf_proc = subprocess.Popen(
-                ["fzf", "--no-sort",          # preserve tree (workspace→tab→pane) order;
-                       # fzf's default sort reorders filtered results by match relevance,
-                       # which lifts a child node (e.g. `tab travel`) above its parent
-                       # workspace (`travel-rule`) when you search for it — breaking the
-                       # nesting. --no-sort keeps input order for both the full list and
-                       # query-filtered matches.
-                       "--layout=reverse",  # workspace on top, tab/pane indented below.
-                       # Why reverse and not default: a non-visual fzf probe (load:up+accept
-                       # on a 3-item list) shows that in this fzf build 0.74.2, under the
-                       # picker's env, --layout=default renders the list BOTTOM-up (first
-                       # input item at the bottom of the screen) while --layout=reverse
-                       # renders it TOP-down (first input item at the top). Since build_tree
-                       # emits workspaces first, --layout=reverse puts the first workspace
-                       # at the top — the workspace→tab→pane order the user wants. This
-                       # matches the user's live observation (default showed reversed).
-                       "--delimiter=|",
-                       "--with-nth=2",
-                       "--header-lines=1",
-                       "--header", fzf_header,
-                       "--prompt=space> ",
-                       "--preview", preview,
-                       "--preview-window=right:50%",
-                       f"--expect={MODIFY_KEY},ctrl-t,ctrl-l,ctrl-n",
-                       "--bind", reload_bind,
-                       f"--listen={sock_path}",
-                       "--color", "bg+:#3b4261,fg+:#ffffff"],
+                [
+                    "fzf",
+                    "--no-sort",  # preserve tree (workspace→tab→pane) order;
+                    # fzf's default sort reorders filtered results by match relevance,
+                    # which lifts a child node (e.g. `tab travel`) above its parent
+                    # workspace (`travel-rule`) when you search for it — breaking the
+                    # nesting. --no-sort keeps input order for both the full list and
+                    # query-filtered matches.
+                    "--layout=reverse",  # workspace on top, tab/pane indented below.
+                    # Why reverse and not default: a non-visual fzf probe (load:up+accept
+                    # on a 3-item list) shows that in this fzf build 0.74.2, under the
+                    # picker's env, --layout=default renders the list BOTTOM-up (first
+                    # input item at the bottom of the screen) while --layout=reverse
+                    # renders it TOP-down (first input item at the top). Since build_tree
+                    # emits workspaces first, --layout=reverse puts the first workspace
+                    # at the top — the workspace→tab→pane order the user wants. This
+                    # matches the user's live observation (default showed reversed).
+                    "--delimiter=|",
+                    "--with-nth=2",
+                    "--header-lines=1",
+                    "--header",
+                    fzf_header,
+                    "--prompt=space> ",
+                    "--preview",
+                    preview,
+                    "--preview-window=right:50%",
+                    f"--expect={MODIFY_KEY},ctrl-t,ctrl-l,ctrl-n",
+                    "--bind",
+                    reload_bind,
+                    f"--listen={sock_path}",
+                    "--color",
+                    "bg+:#3b4261,fg+:#ffffff",
+                ],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 text=True,

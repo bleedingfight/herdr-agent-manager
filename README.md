@@ -26,7 +26,7 @@ A local plugin for [Herdr](https://herdr.dev) that lets you quickly search / sel
   - Supported actions: focus, rename, set pane label, move, close, send message
   - Move capabilities: an agent / pane can move to **any tab in any workspace** (`Move to tab` now lists targets across all workspaces, options labeled `workspace / tab`); a whole tab can move to **another workspace** (`Move tab to workspace` — creates a target tab in the destination and moves all the source tab's panes over, then auto-closes the source tab)
   - Quick rename (skips the `Ctrl + o` sub-menu): `Ctrl + t` renames the current node (agent name, or a workspace / tab label), `Ctrl + l` sets the current pane's label (agent/pane nodes only)
-  - `Ctrl + n`: create a new workspace using the current node's directory as the working directory. On an agent/pane it uses that pane's cwd; on a workspace/tab it uses the cwd of the focused pane inside it; label optional (if blank, herdr auto-names from the cwd basename). It does not auto-switch focus afterward — the new workspace appears in the refreshed tree; press Enter to focus it
+  - `Ctrl + n`: create a new workspace. The cwd **defaults to the current directory** and is pre-filled into the prompt — press Enter to keep it, or edit it to point elsewhere; label optional (if blank, herdr auto-names from the basename of the chosen cwd). It does not auto-switch focus afterward — the new workspace appears in the refreshed tree; press Enter to focus it
   - `Ctrl + r`: manually re-render the tree in place (a fallback on top of the auto-refresh, for when you want to force a re-pull). The picker already **auto-refreshes live** (see below), so you usually don't need this
   - **Live auto-refresh**: while the picker is open, a background watcher thread checks the herdr state fingerprint (labels, ownership, and agent status of workspaces/tabs/panes) every 0.5s. If you edit / move / rename / create / close any pane or tab in **another pane**, the watcher detects the change and reloads the list with the latest tree via fzf's `--listen` socket — **no need to close and reopen, no keypress needed**. This solves the "I edited a pane but the picker still shows the old state" problem: when you come back to a still-open picker, the list is already up to date. Each reload re-runs `herdr api snapshot` (~3.6ms) + rebuilds the tree (~6ms) — accurate and smooth
   - Search **preserves the tree's nesting order**: the list is rendered with `--no-sort`, so typing a filter keyword **does not** re-rank by match score — a child node (e.g. `tab travel`) always stays right after its parent workspace (e.g. `travel-rule`) and never drifts to the top of the list detached from its parent just because it "matches better". So after moving a tab, searching its name shows it directly under the workspace it belongs to
@@ -262,7 +262,7 @@ Press ctrl+b w
  → press Enter to focus that node
  → or Ctrl + t to rename the current node directly (agent name / workspace / tab label)
  → or Ctrl + l to set the current pane's label (agent/pane nodes only)
- → or Ctrl + n to create a new workspace from the current node's directory (label optional)
+ → or Ctrl + n to create a new workspace (cwd defaults to the current directory and is pre-filled / editable; label optional)
  → or Ctrl + r to refresh the tree (re-pulls the snapshot, refreshes in place, doesn't exit the picker)
  → or Ctrl + o to open the modify menu:
      workspace node: Rename workspace / Close workspace
