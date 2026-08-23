@@ -19,6 +19,13 @@ HERDR = os.environ.get("HERDR_BIN_PATH", "herdr")
 # both herdr's default config and fzf's default bindings.
 MODIFY_KEY = "ctrl-o"
 
+# The pane this picker process runs in. set_title() renames it to "spaces", so
+# without filtering it shows up in build_tree() as `◦ pane spaces` — and picking
+# it then renames/closes the picker's OWN throwaway pane (renames evaporate when
+# the pane dies; close just SIGHUPs the picker itself). We exclude it everywhere
+# a pane id could be selected or operated on.
+SELF_PANE_ID = os.environ.get("HERDR_PANE_ID")
+
 
 def set_title(title):
     pane_id = os.environ.get("HERDR_PANE_ID")
@@ -262,7 +269,11 @@ def build_tree(snapshot):
             tab_id = tab["tab_id"]
             lines.append(f"tab:{tab_id}|  ▸ tab  {tab.get('label', '-')}")
 
-            panes = [p for p in snapshot["panes"] if p.get("tab_id") == tab_id]
+            panes = [
+                p
+                for p in snapshot["panes"]
+                if p.get("tab_id") == tab_id and p.get("pane_id") != SELF_PANE_ID
+            ]
             for pane in panes:
                 pane_id = pane["pane_id"]
                 agent = agent_for_pane(snapshot, pane_id)
@@ -467,6 +478,12 @@ def modify(snapshot, typ, id_):
         pane, agent = lookup(snapshot, typ, id_)
         if not pane:
             return
+        if id_ == SELF_PANE_ID:
+            notify(
+                "Picker's own pane",
+                "This is the picker itself — pick a different pane to operate on.",
+            )
+            return
         synth = bool(agent and agent.get("synthesized"))
         name = agent["name"] if agent else pane.get("label", "?")
         kind = "agent (unmanaged)" if synth else ("agent" if agent else "pane")
@@ -575,6 +592,12 @@ def rename_node(snapshot, typ, id_):
         pane, agent = lookup(snapshot, typ, id_)
         if not pane:
             return
+        if id_ == SELF_PANE_ID:
+            notify(
+                "Picker's own pane",
+                "This is the picker itself — pick a different pane to rename.",
+            )
+            return
         if agent and not agent.get("synthesized"):
             new = prompt(f"Rename agent '{agent['name']}' to: ")
             if new:
@@ -595,6 +618,12 @@ def set_node_pane_label(snapshot, typ, id_):
         return
     pane, _ = lookup(snapshot, typ, id_)
     if not pane:
+        return
+    if id_ == SELF_PANE_ID:
+        notify(
+            "Picker's own pane",
+            "This is the picker itself — pick a different pane to label.",
+        )
         return
     cur = pane.get("label") or pane.get("terminal_title_stripped", "")
     new = prompt(f"Set label for pane {id_} (current: {cur}): ")
