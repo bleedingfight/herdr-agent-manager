@@ -254,21 +254,44 @@ def agent_for_pane(snapshot, pane_id):
     return None
 
 
-def build_tree(snapshot):
-    lines = []
+DIM_ON = "\x1b[2m"  # dim foreground: used for scaffold ancestors during search
+DIM_OFF = "\x1b[0m"
+HIL_ON = "\x1b[1;38;5;228m"  # bold yellow: hight light the query match inside a hit
+HIL_OFF = "\x1b[0m"
+
+
+def _build_model(snapshot):
+    # A nested workspace → tab → pane model carrying, for every node, the
+    # `display` text (indented tree line as shown) and the `search` text (what
+    # fzf matches against — the node's own label only, never ancestor labels).
+    model = []
     workspaces = sorted(snapshot["workspaces"], key=lambda w: w.get("number", 0))
     for ws in workspaces:
         ws_id = ws["workspace_id"]
-        lines.append(f"workspace:{ws_id}|● workspace  {ws.get('label', '-')}")
-
+        ws_label = ws.get("label", "-")
+        wnode = {
+            "type": "workspace",
+            "id": ws_id,
+            "label": ws_label,
+            "search": ws_label,
+            "display": f"● workspace  {ws_label}",
+            "children": [],
+        }
         tabs = sorted(
             [t for t in snapshot["tabs"] if t.get("workspace_id") == ws_id],
             key=lambda t: t.get("number", 0),
         )
         for tab in tabs:
             tab_id = tab["tab_id"]
-            lines.append(f"tab:{tab_id}|  ▸ tab  {tab.get('label', '-')}")
-
+            tab_label = tab.get("label", "-")
+            tnode = {
+                "type": "tab",
+                "id": tab_id,
+                "label": tab_label,
+                "search": tab_label,
+                "display": f"  ▸ tab  {tab_label}",
+                "children": [],
+            }
             panes = [
                 p
                 for p in snapshot["panes"]
@@ -287,17 +310,186 @@ def build_tree(snapshot):
                         "terminal_title_stripped", ""
                     )
                     suffix = f"  {title}" if title and title != name else ""
-                    lines.append(
-                        f"agent:{pane_id}|    ◦ agent  {name}  [{status}]{suffix}"
-                    )
+                    pnode = {
+                        "type": "agent",
+                        "id": pane_id,
+                        "label": name,
+                        "search": f"{name} {title}".strip(),
+                        "display": f"    ◦ agent  {name}  [{status}]{suffix}",
+                        "children": [],
+                    }
                 else:
                     title = (
                         pane.get("label")
                         or pane.get("terminal_title_stripped", "")
                         or "pane"
                     )
-                    lines.append(f"pane:{pane_id}|    ◦ pane  {title}")
+                    pnode = {
+                        "type": "pane",
+                        "id": pane_id,
+                        "label": title,
+                        "search": title,
+                        "display": f"    ◦ pane  {title}",
+                        "children": [],
+                    }
+                tnode["children"].append(pnode)
+            wnode["children"].append(tnode)
+        model.append(wnode)
+    return model
+
+
+def build_tree(snapshot):
+    lines = []
+    for node in _walk(_build_model(snapshot)):
+        lines.append(f"{node['type']}:{node['id']}|{node['display']}")
     return lines
+
+
+def _walk(model):
+    # Pre-order flatten of the nested model.
+    out = []
+    for node in model:
+        out.append(node)
+        out.extend(_walk(node["children"]))
+    return out
+
+
+def _fuzz_matches(query, texts):
+    # Which texts match the query — delegated to fzf itself so CJK and the
+    # exact fuzzy semantics of `fzf` are preserved. Returns a set of indexes.
+    # Rows are `idx<RS>text`; the RS is a control char that can't appear in a
+    # label, so the match scope stays on the text only.
+    sep = "\x1e"
+    rows = [f"{i}{sep}{t}" for i, t in enumerate(texts)]
+    try:
+        r = subprocess.run(
+            ["fzf", "-f", query, f"--delimiter={sep}", "--with-nth=2", "--no-sort"],
+            input="\n".join(rows),
+            capture_output=True,
+            text=True,
+        )
+    except Exception:
+        return set()
+    if r.returncode not in (0, 1):
+        return set()
+    out = set()
+    for ln in r.stdout.splitlines():
+        try:
+            out.add(int(ln.split(sep, 1)[0]))
+        except (ValueError, IndexError):
+            pass
+    return out
+
+
+def _highlight(text, query):
+    # Wrap the fuzzy-matched characters of `query` inside `text` with the
+    # highlight color (case-insensitive, mirrors fzf's own visual). Tries a
+    # direct case-insensitive substring first (the common prefix case: n→no→
+    # note), then falls back to a greedy fuzzy subsequence. Returns None when
+    # nothing matches.
+    if not query:
+        return None
+    low = text.lower()
+    lq = query.lower()
+    i = low.find(lq)
+    if i >= 0:
+        return (
+            text[:i]
+            + HIL_ON
+            + text[i : i + len(query)]
+            + HIL_OFF
+            + text[i + len(query) :]
+        )
+    pos = []
+    j = 0
+    for ch in lq:
+        f = low.find(ch, j)
+        if f < 0:
+            return None
+        pos.append(f)
+        j = f + 1
+    out = []
+    last = 0
+    for p in pos:
+        out.append(text[last:p])
+        out.append(HIL_ON + text[p] + HIL_OFF)
+        last = p + 1
+    out.append(text[last:])
+    return "".join(out) if pos else None
+
+
+def filter_lines(model, query):
+    # Radix-style filtering: keep a node when it itself matches, when it is a
+    # descendant of a match (subtree reveal), or when it is an ancestor of a
+    # match (scaffold). Non-matching siblings of a match are pruned. Rows shown
+    # purely as scaffold ancestors are dimmed so they never obscure the
+    # highlighted search target. An empty query keeps every row (no dim).
+    ctx = _walk(model)
+    texts = [n.get("search") or "" for n in ctx]
+    if query.strip():
+        matched = _fuzz_matches(query, texts)
+    else:
+        matched = set(range(len(ctx)))
+    for i, node in enumerate(ctx):
+        node["matched"] = i in matched
+
+    # bottom-up: does this subtree contain a match?
+    for node in reversed(ctx):
+        node["sub"] = bool(node.get("matched")) or any(
+            c["sub"] for c in node["children"]
+        )
+
+    # top-down: scaffold ancestors (no matched ancestor above) get dimmed.
+    def walk_above(node, above_matched):
+        node["shown"] = (
+            node.get("matched")
+            or above_matched
+            or any(c["sub"] for c in node["children"])
+        )
+        node["dim"] = node["shown"] and not node.get("matched") and not above_matched
+        for c in node["children"]:
+            walk_above(c, above_matched or node.get("matched"))
+
+    for w in model:
+        walk_above(w, False)
+
+    lines = []
+    for node in ctx:
+        if not node["shown"]:
+            continue
+        disp = node["display"]
+        if node["dim"]:
+            disp = f"{DIM_ON}{disp}{DIM_OFF}"
+        elif node["matched"] and query:
+            # highlight the matched label inside the row (skip ancestors that
+            # only got kept as dimmed scaffold — they are not targets).
+            label = node["label"]
+            i = disp.find(label)
+            if i >= 0:
+                hl = _highlight(label, query)
+                if hl is not None:
+                    disp = disp[:i] + hl + disp[i + len(label) :]
+        lines.append(f"{node['type']}:{node['id']}|{disp}")
+    return lines
+
+
+def dump_tree():
+    # fzf `reload()` target: print the current tree (header + lines) so Ctrl+R
+    # can refresh the list in place without closing the picker. The picker
+    # freezes its snapshot at open time and does not live-update, so a move
+    # done from another pane (or before this picker was opened) leaves the
+    # tree stale until it is reopened or refreshed.
+    snapshot = get_snapshot()
+    header_line = "|TYPE        NAME"
+    sys.stdout.write("\n".join([header_line] + build_tree(snapshot)) + "\n")
+
+
+def dump_filtered(query):
+    # Reload target for a mid-search refresh: header + filter-pruned tree.
+    snapshot = get_snapshot()
+    model = _build_model(snapshot)
+    header_line = "|TYPE        NAME"
+    sys.stdout.write("\n".join([header_line] + filter_lines(model, query)) + "\n")
 
 
 def lookup(snapshot, typ, id_):
@@ -699,10 +891,11 @@ def _snapshot_fingerprint():
 def _fzf_listen_reload(sock_path, self_path):
     # Send a reload action to the running fzf via its --listen Unix socket.
     # fzf's listen API: POST / with the action string as the body → 200 OK.
-    # The action reloads the tree from a fresh `--dump-tree` invocation, so
-    # the list re-renders with the latest herdr state.
+    # The action reloads the (filtered) tree from a fresh snapshot, keeping
+    # the current query ({q} is expanded by fzf at execution time), so the
+    # list re-renders with the latest herdr state.
     try:
-        body = f"reload(python3 '{self_path}' --dump-tree)".encode()
+        body = f"reload(python3 '{self_path}' --filter-tree {{q}})".encode()
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         s.settimeout(1.0)
         s.connect(sock_path)
@@ -753,6 +946,10 @@ def main():
         dump_tree()
         return
 
+    if len(sys.argv) > 2 and sys.argv[1] == "--filter-tree":
+        dump_filtered(sys.argv[2])
+        return
+
     self_path = os.path.abspath(__file__)
 
     # Live refresh: start an fzf --listen socket + a watcher that reloads the
@@ -789,11 +986,19 @@ def main():
             fzf_header = (
                 f"spaces tree — enter:focus  {MODIFY_KEY}:modify  "
                 f"ctrl-t:title  ctrl-l:label  ctrl-n:new-ws  "
-                f"ctrl-r:refresh  esc:quit"
+                f"ctrl-r:refresh  esc:quit   "
+                f"(search keeps matched branches, dims ancestors)"
             )
-            # ctrl-r reloads the tree in place from a fresh snapshot (manual refresh
-            # on top of the automatic watcher-driven refresh).
-            reload_bind = f"ctrl-r:reload(python3 '{self_path}' --dump-tree)"
+            # Search is hierarchy-aware: while typing, only matching nodes stay
+            # (non-matching siblings pruned) and their workspace→tab ancestors
+            # are dimmed and kept. The picker runs fzf with search DISABLED and
+            # drives the pruning in Python on every keystroke via `change` →
+            # reload(--filter-tree {q}).
+            reload_cmd = f"python3 '{self_path}' --filter-tree {{q}}"
+            # ctrl-r reloads the tree in place (manual refresh on top of the
+            # automatic watcher-driven refresh).
+            reload_bind = f"ctrl-r:reload({reload_cmd})"
+            change_bind = f"change:reload({reload_cmd})"
             # Launch fzf with Popen so we can start the watcher WHILE fzf runs —
             # the watcher needs the live --listen socket to send reloads to. We
             # feed the tree via communicate(input=...) which writes stdin, closes
@@ -832,6 +1037,11 @@ def main():
                     # matches the user's live observation (default showed reversed).
                     "--delimiter=|",
                     "--with-nth=2",
+                    # --disabled: fzf does no native search; every keystroke
+                    # reloads a Python-pruned tree so the workspace→tab→pane
+                    # scaffolding stays visible around matches.
+                    "--disabled",
+                    "--ansi",  # render the dim scaffold rows (DIM_ON/…)
                     "--header-lines=1",
                     "--header",
                     fzf_header,
@@ -841,7 +1051,7 @@ def main():
                     "--preview-window=right:50%",
                     f"--expect={MODIFY_KEY},ctrl-t,ctrl-l,ctrl-n",
                     "--bind",
-                    reload_bind,
+                    f"{change_bind},{reload_bind}",
                     f"--listen={sock_path}",
                     "--color",
                     "bg+:#3b4261,fg+:#ffffff",

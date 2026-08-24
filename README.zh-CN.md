@@ -29,7 +29,7 @@
   - `Ctrl + n`：创建一个新 workspace，工作目录**默认取当前目录**并预填到输入框中——直接回车确认，或改写成其他路径；label 可留空（留空时 herdr 用所选 cwd 的 basename 自动命名）。创建后不自动切换焦点，新 workspace 会出现在刷新后的树里，按 Enter 即可聚焦
   - `Ctrl + r`：手动原地刷新树（在自动刷新之上的兜底，比如你想立刻强制重拉一次）。选择器本身已**自动实时刷新**（见下），通常无需手动按。
   - **自动实时刷新**：picker 打开期间有一个后台 watcher 线程，每 0.5 秒检查一次 herdr 状态指纹（workspaces/tabs/panes 的 label、归属、agent 状态）。你在**别的 pane** 里编辑/移动/重命名/新建/关闭了任何 pane 或 tab，watcher 检测到变化后会通过 fzf 的 `--listen` socket 自动让列表 reload 最新树——**不用关重开、不用按键**。这是为了解决"编辑完一个 pane，picker 还显示旧状态"的问题：回到还开着的 picker，列表已经是新的了。每次 reload 都重新调 `herdr api snapshot`（~3.6ms）+ 重建树（~6ms），准确且不卡。
-  - 搜索时**保持树状嵌套顺序**：列表用 `--no-sort` 渲染，输入关键词筛选时**不会**按匹配度重排——子节点（如 `tab travel`）始终紧跟其父 workspace（如 `travel-rule`）之后，不会因为"匹配度更高"而漂到列表最上方脱离父节点。这样移动完一个 tab 后搜它的名字，能直接在它所属 workspace 下方看到它
+  - 搜索**带层级感知（类 radix 匹配）**：输入关键词后，只有真正包含关键词的节点会保留下来；它们的 `workspace → tab` 祖先行也会保留并**变暗（dim）**——既能看到命中项属于哪个 workspace 的哪个 tab，又不会让骨架挡住命中项的高亮；不匹配的兄弟节点和无关 workspace 会被**剪掉**（例如 ws1/tab1 和 ws2/tab1 都叫 pane1 时，搜索 `pane1` 会同时显示两个 pane1、各自位于所属 workspace 下，而只在 ws1/tab1 里的兄弟 `pane2` 不会混进来）。空查询显示完整树、无暗显。匹配只看节点**自身标签**（祖先名不参与匹配），树的嵌套顺序保持不变
   - 右侧 preview 会根据选中类型展示对应信息
 
 ---
