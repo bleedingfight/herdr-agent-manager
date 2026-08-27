@@ -83,10 +83,56 @@ agent-manager/
 
 ## Install
 
-### Install via `herdr plugin install` (recommended)
+### One-click install (recommended)
 
-If herdr >= 0.7.0 is installed, install the plugin straight from GitHub with a
-single command — no manual clone or copy needed:
+On any machine with herdr >= 0.7.0 and git, a single command — no clone needed:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/bleedingfight/herdr-agent-manager/main/install.sh | bash
+```
+
+or download the script first and run it:
+
+```bash
+curl -fsSL -o install.sh https://raw.githubusercontent.com/bleedingfight/herdr-agent-manager/main/install.sh
+bash install.sh
+```
+
+When the script isn't inside a full plugin directory, it `git clone`s the repo
+to a temp dir and hands off to the repo's own `install.sh`. After install,
+press `ctrl+b a` and `ctrl+b w`.
+
+> The keybinding step in `install.sh` is **idempotent**: before appending, it
+> strips every `[[keys.command]]` block in `config.toml` that points at this
+> plugin's scripts (`agent-manager.py` / `space-picker.py`) — **including the
+> `local.agent-manager-<hash>/bin/...` path form left by `herdr plugin install`** —
+> then appends one fresh set pointing at the install path. So no matter what was
+> installed before or how the config drifted, you end up with exactly one
+> correct binding, no duplicates or dead blocks. See
+> [Configure keybindings](#configure-keybindings).
+
+### Install via install.sh (local clone)
+
+If you've already cloned the repo, run inside the plugin directory:
+
+```bash
+./install.sh
+```
+
+The script automatically:
+
+1. Checks that `herdr` is installed
+2. Copies the plugin to `~/.config/herdr/plugins/local/agent-manager` (backs up an existing one to `*.backup.<timestamp>`; installs in place if run from that dir)
+3. `chmod +x bin/*.py`
+4. Runs `herdr plugin link`
+5. **Idempotently strips** every stale keybinding block pointing at this plugin (incl. the github-hash path form), then appends one fresh set
+6. Runs `herdr server reload-config`
+
+After install, just press `ctrl+b a` and `ctrl+b w`.
+
+### Install via `herdr plugin install`
+
+If you prefer herdr's built-in plugin manager:
 
 ```bash
 herdr plugin install bleedingfight/herdr-agent-manager --yes
@@ -94,39 +140,24 @@ herdr plugin install bleedingfight/herdr-agent-manager --yes
 
 herdr fetches the repo, places it under
 `~/.config/herdr/plugins/github/local.agent-manager-<hash>/`, links it (plugin
-id: `local.agent-manager`), and reloads the config. Then add the keybindings
-(see [Configure keybindings](#configure-keybindings)) — use `type = "pane"`,
+id: `local.agent-manager`), and reloads the config. **Note: `herdr plugin install`
+does not write keybindings itself** — you must add them per
+[Configure keybindings](#configure-keybindings). Use `type = "pane"`,
 NOT `plugin_action` (these pickers run raw `fzf`, which needs an interactive TTY
-that only `type = "pane"` provides) — and reload once more:
+that only `type = "pane"` provides; under `plugin_action` fzf gets no TTY and
+hangs / silently does nothing) — and reload once more:
 
 ```bash
 herdr server reload-config
 ```
 
-After that, press `ctrl+b a` and `ctrl+b w`.
+> Tip: after installing via `herdr plugin install`, **do not** also run the
+> repo's `install.sh` — it would copy a second copy into `plugins/local/agent-manager/`,
+> duplicating the github one. Pick one method. To switch, uninstall one first.
 
 To update later, re-run the same `herdr plugin install` command (or pass
 `--ref <tag>` for a specific tag). To remove, run
 `herdr plugin uninstall local.agent-manager`.
-
-### Install via install.sh (local clone)
-
-Run inside the plugin directory:
-
-```bash
-~/.config/herdr/plugins/local/agent-manager/install.sh
-```
-
-The script automatically:
-
-1. Checks that `herdr` is installed
-2. Copies the plugin to `~/.config/herdr/plugins/local/agent-manager` (backs up an existing one to `*.backup.<timestamp>`)
-3. `chmod +x bin/*.py`
-4. Runs `herdr plugin link`
-5. Appends the keybindings to `~/.config/herdr/config.toml` (skipped if already present)
-6. Runs `herdr server reload-config`
-
-After install, just press `ctrl+b a` and `ctrl+b w`.
 
 ### Update / reinstall
 
@@ -189,23 +220,32 @@ spawns the script without one and `fzf` hangs / never renders, so the shortcut
 silently does nothing. Point the command at the installed script's absolute
 path (herdr does not expand `~`):
 
+- `install.sh` / curl one-click install: the script lives at
+  `~/.config/herdr/plugins/local/agent-manager/bin/...` (**recommended**;
+  `install.sh` writes bindings pointing here automatically).
 - `herdr plugin install` install: the script lives at
   `~/.config/herdr/plugins/github/local.agent-manager-<hash>/bin/...` (find
   the `<hash>` dir with `ls ~/.config/herdr/plugins/github/`; the hash is
   stable across reinstalls, so the path survives updates).
-- local-clone install: `~/.config/herdr/plugins/local/agent-manager/bin/...`
+
+> **Important**: the two install methods produce **different** script paths
+> (`local/agent-manager/` vs `github/local.agent-manager-<hash>/`). The `command`
+> in `config.toml` is a hard-coded absolute path — if you edit `bin/*.py` under
+> the *other* path, the shortcut still runs the old copy and "changes don't take
+> effect / it broke again". If you installed via `install.sh`, always edit files
+> under `plugins/local/agent-manager/bin/`.
 
 ```toml
 [[keys.command]]
 key = "prefix+a"
 type = "pane"
-command = "/home/you/.config/herdr/plugins/github/local.agent-manager-<hash>/bin/agent-manager.py"
+command = "/home/you/.config/herdr/plugins/local/agent-manager/bin/agent-manager.py"
 description = "Pick agent and send message"
 
 [[keys.command]]
 key = "prefix+w"
 type = "pane"
-command = "/home/you/.config/herdr/plugins/github/local.agent-manager-<hash>/bin/space-picker.py"
+command = "/home/you/.config/herdr/plugins/local/agent-manager/bin/space-picker.py"
 description = "Pick workspace/space"
 ```
 

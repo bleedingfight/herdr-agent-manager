@@ -83,9 +83,47 @@ agent-manager/
 
 ## 安装
 
-### 通过 `herdr plugin install` 安装（推荐）
+### 一键安装（推荐）
 
-只要装了 herdr >= 0.7.0，就能用一条命令直接从 GitHub 安装，无需手动 clone 或拷贝：
+在任意设备上，只要装了 herdr >= 0.7.0 和 git，一条命令搞定——无需先 clone：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/bleedingfight/herdr-agent-manager/main/install.sh | bash
+```
+
+或先把脚本下下来再跑也行：
+
+```bash
+curl -fsSL -o install.sh https://raw.githubusercontent.com/bleedingfight/herdr-agent-manager/main/install.sh
+bash install.sh
+```
+
+脚本不在完整插件目录里时，会自动 `git clone` 仓库到临时目录、再交给仓库内的 `install.sh` 完成安装。装完直接按 `ctrl+b a` 和 `ctrl+b w` 就能用。
+
+> `install.sh` 的快捷键写入是**幂等**的：它会先把 `config.toml` 里所有指向本插件脚本（`agent-manager.py` / `space-picker.py`）的旧 `[[keys.command]]` 块连同相关注释一起清掉——**包括 `herdr plugin install` 留下的 `local.agent-manager-<hash>/bin/...` 路径形态**——再追加唯一一组指向新安装路径的新块。所以无论这台机器之前用哪种方式装过、配置怎么漂移，重装后都只剩一组正确绑定，不会有重复或失效块。详见下文 [配置快捷键](#配置快捷键)。
+
+### 通过 install.sh 安装（本地 clone）
+
+如果你已经 clone 了仓库，在插件目录内执行：
+
+```bash
+./install.sh
+```
+
+脚本会自动：
+
+1. 检查 `herdr` 是否已安装
+2. 把插件复制到 `~/.config/herdr/plugins/local/agent-manager`（若已存在则备份为 `*.backup.<时间戳>`；若本来就在该目录里则就地安装）
+3. `chmod +x bin/*.py`
+4. 执行 `herdr plugin link`
+5. **幂等清理** `config.toml` 里所有指向本插件的旧快捷键块（含 github hash 路径形态），再追加一组指向新路径的新块
+6. 执行 `herdr server reload-config`
+
+装完后直接按 `ctrl+b a` 和 `ctrl+b w` 就能用。
+
+### 通过 `herdr plugin install` 安装
+
+如果你更偏好 herdr 自带的插件管理，也可以用：
 
 ```bash
 herdr plugin install bleedingfight/herdr-agent-manager --yes
@@ -93,38 +131,19 @@ herdr plugin install bleedingfight/herdr-agent-manager --yes
 
 herdr 会拉取仓库、放到
 `~/.config/herdr/plugins/github/local.agent-manager-<hash>/` 下、链接插件
-（plugin id：`local.agent-manager`）并重载配置。然后按下文
-[配置快捷键](#配置快捷键)添加——**用 `type = "pane"`，不要用
+（plugin id：`local.agent-manager`）并重载配置。**注意：`herdr plugin install`
+本身不会写快捷键**，需要你按下文 [配置快捷键](#配置快捷键) 手动添加——**用 `type = "pane"`，不要用
 `plugin_action`**（这些选择器跑的是裸 `fzf`，需要交互 TTY，只有 `type = "pane"`
-才会开临时 pane 给 TTY）——再重载一次即可：
+才会开临时 pane 给 TTY；用 `plugin_action` 时 fzf 拿不到 TTY 会卡住、快捷键像没反应一样）——再重载一次即可：
 
 ```bash
 herdr server reload-config
 ```
 
-装完后按 `ctrl+b a` 和 `ctrl+b w` 就能用。
+> 提示：用 `herdr plugin install` 装好后，**不要**再跑仓库的 `install.sh`——后者会把插件复制一份到 `plugins/local/agent-manager/`，与 github 路径那份重复。两种方式二选一即可。若要切换，先卸载其一。
 
 日后更新只需再跑一遍同样的 `herdr plugin install` 命令（或加
 `--ref <tag>` 指定某个 tag）；卸载用 `herdr plugin uninstall local.agent-manager`。
-
-### 通过 install.sh 安装（本地 clone）
-
-在插件目录内执行：
-
-```bash
-~/.config/herdr/plugins/local/agent-manager/install.sh
-```
-
-脚本会自动：
-
-1. 检查 `herdr` 是否已安装
-2. 把插件复制到 `~/.config/herdr/plugins/local/agent-manager`（若已存在则备份为 `*.backup.<时间戳>`）
-3. `chmod +x bin/*.py`
-4. 执行 `herdr plugin link`
-5. 在 `~/.config/herdr/config.toml` 里追加快捷键（若已存在则跳过）
-6. 执行 `herdr server reload-config`
-
-装完后直接按 `ctrl+b a` 和 `ctrl+b w` 就能用。
 
 ### 更新 / 重装
 
@@ -186,23 +205,30 @@ herdr plugin link ~/.config/herdr/plugins/local/agent-manager
 TTY，`fzf` 会卡住/不渲染，快捷键就像没反应一样。`command` 指向已装脚本的
 绝对路径（herdr 不展开 `~`）：
 
+- `install.sh` / curl 一键装的：脚本在
+  `~/.config/herdr/plugins/local/agent-manager/bin/...`（**推荐**，install.sh
+  会自动写入并指向这里）。
 - `herdr plugin install` 装的：脚本在
   `~/.config/herdr/plugins/github/local.agent-manager-<hash>/bin/...`
   （`<hash>` 目录用 `ls ~/.config/herdr/plugins/github/` 查；该 hash 在重装
   时稳定，所以路径不会因更新而失效）。
-- 本地 clone 装的：`~/.config/herdr/plugins/local/agent-manager/bin/...`
+
+> **重要**：两种安装方式产生的脚本路径**不同**（`local/agent-manager/` vs
+> `github/local.agent-manager-<hash>/`）。`config.toml` 里的 `command` 死指向其中一个绝对路径——
+> 如果你又去另一个路径下改了 `bin/*.py`，快捷键跑的还是旧路径那份，表现为"改了却没生效/又失效"。
+> 用 `install.sh` 装的请始终编辑 `plugins/local/agent-manager/bin/` 下的文件。
 
 ```toml
 [[keys.command]]
 key = "prefix+a"
 type = "pane"
-command = "/home/you/.config/herdr/plugins/github/local.agent-manager-<hash>/bin/agent-manager.py"
+command = "/home/you/.config/herdr/plugins/local/agent-manager/bin/agent-manager.py"
 description = "Pick agent and send message"
 
 [[keys.command]]
 key = "prefix+w"
 type = "pane"
-command = "/home/you/.config/herdr/plugins/github/local.agent-manager-<hash>/bin/space-picker.py"
+command = "/home/you/.config/herdr/plugins/local/agent-manager/bin/space-picker.py"
 description = "Pick workspace/space"
 ```
 
