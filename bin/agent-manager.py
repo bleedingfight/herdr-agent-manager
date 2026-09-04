@@ -201,6 +201,20 @@ def format_agent_line(a, widths):
     return f"{name}|{visible}"
 
 
+def format_header_line(headers, widths):
+    # Same alignment as data rows so the pinned header (--header-lines=1)
+    # lines up exactly with the agent rows below it.
+    visible = (
+        f"{headers[0]:<{widths[0]}}  "
+        f"{headers[1]:<{widths[1]}}  "
+        f"{headers[2]:<{widths[2]}}  "
+        f"{headers[3]:<{widths[3]}}"
+    )
+    # Key column is empty for the header so fzf's {1} matching column stays
+    # blank and the NAME column begins at the same offset as data rows.
+    return f"|{visible}"
+
+
 def pick_agent(agents):
     set_title("agents")
 
@@ -224,18 +238,15 @@ def pick_agent(agents):
     fzf_colors = "bg+:#3b4261,fg+:#ffffff"
     fzf_header = (f"agents — enter:send  {MODIFY_KEY}:modify  "
                   f"ctrl-t:title  ctrl-l:label  ctrl-n:new-agent  ctrl-r:rename  ctrl-f:focus  ctrl-x:close  esc:quit")
-    header_visible = (
-        f"{headers[0]:<{widths[0]}}  "
-        f"{headers[1]:<{widths[1]}}  "
-        f"{headers[2]:<{widths[2]}}  "
-        f"{headers[3]:<{widths[3]}}"
-    )
-    lines = [f"|{header_visible}"]
+    header_visible = format_header_line(headers, widths)
+    lines = [header_visible]
     for a in agents:
         lines.append(format_agent_line(agent_display_fields(a, pane_labels.get(a.get("pane_id"))), widths))
 
     result = subprocess.run(
-        ["fzf", "--delimiter=|",
+        ["fzf", "--no-sort",
+               "--layout=reverse",  # header (lines[0]) pinned at top, agents below
+               "--delimiter=|",
                "--with-nth=2",
                "--header-lines=1",
                "--prompt=agent> ",
@@ -249,25 +260,90 @@ def pick_agent(agents):
         text=True,
     )
 
-    if result.returncode != 0 or not result.stdout.strip():
+    # fzf exit codes: 0 = normal select, 1 = no match, 2 = error, 130 = esc/ctrl-c.
+    # BUT with --expect, fzf exits 1 when an expect-key is pressed and outputs
+    # the key on stdout. So rc==1 with non-empty stdout is NOT an error here —
+    # it's the ctrl-n / ctrl-o / etc. action we asked for. Only treat rc!=0 as
+    # "cancelled" when there's no expect-key output.
+    out = result.stdout
+    if (result.returncode != 0 and not out.strip()) or not out.strip():
         sys.exit(0)
 
-    parts = result.stdout.strip("\n").split("\n")
-    if len(parts) >= 2:
-        action = parts[0] or None
-        selection = parts[-1]
+    # With --expect, fzf prints: line1 = pressed key (empty if none),
+    # line2 = selected item (empty if none — e.g. an empty agent list has no
+    # selectable row, so pressing ctrl-n yields just "ctrl-n"). We must NOT
+    # strip("\n") first: that collapses a trailing empty selection line into
+    # nothing, leaving a single "ctrl-n" line that the old len>=2 logic
+    # misparsed as "no action" (action=None) — making ctrl-n on an empty list
+    # look like it does nothing. Instead, since we know the expect keys, treat
+    # line[0] as the action iff it is one of them; the selection is whatever
+    # follows (possibly empty).
+    EXPECT_KEYS = {MODIFY_KEY, "ctrl-r", "ctrl-f", "ctrl-x",
+                  "ctrl-t", "ctrl-l", "ctrl-n"}
+    lines = result.stdout.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    # With --expect, fzf ALWAYS emits a first line for the pressed key — empty
+    # when none was pressed (plain Enter). So:
+    #   pressed expect key -> line0=key, line1=selection (may be empty)
+    #   plain Enter        -> line0="" (empty), line1=selection
+    first = lines[0] if lines else ""
+    if first in EXPECT_KEYS:
+        action = first
+        selection = lines[-1] if len(lines) >= 2 else ""
     else:
+        # No expect key pressed (plain Enter): line0 is the empty key line,
+        # the actual selection is line1. first here is "" — NOT the selection.
         action = None
-        selection = parts[0]
+        selection = lines[1] if len(lines) >= 2 else (first if first else "")
 
-    name = selection.split("|")[0]
+    name = selection.split("|")[0] if selection else ""
     return name, action
 
 
-def send_to_agent(name, pane_id, message):
+def _send_via_prompt(name, message):
+    # herdr >= 0.8: `agent prompt <target> <text>` is the real submission path.
+    # It routes text through herdr's agent-input layer (respects the agent's
+    # state — rejects with agent_blocked at approval/question dialogs). Do NOT
+    # pass --timeout alone: it requires --wait, and we don't want to block the
+    # picker on the agent's turn to settle.
+    herdr("agent", "prompt", name, message)
+
+
+def _send_via_legacy(name, pane_id, message):
+    # herdr < 0.8 (or fallback): the old `agent send <target> <text>` plus a
+    # literal Return keystroke. `agent send` was removed in 0.8, so this path
+    # only works on older installs.
     herdr("agent", "send", name, message)
     herdr("pane", "send-keys", pane_id, "Return")
-    notify("Sent", f"to {name}")
+
+
+def send_to_agent(name, pane_id, message):
+    # Version-dispatched, with a runtime fallback: try the method that matches
+    # the running herdr version first; if it fails (e.g. the version boundary
+    # was misjudged, or the command was renamed in a patch release), fall back
+    # to the other method so the message is still delivered on some path.
+    use_new = herdr_version() >= (0, 8, 0)
+    try:
+        if use_new:
+            _send_via_prompt(name, message)
+        else:
+            _send_via_legacy(name, pane_id, message)
+        notify("Sent", f"to {name}")
+        return
+    except subprocess.CalledProcessError as e:
+        # Primary path failed — try the other one.
+        pass
+    try:
+        if use_new:
+            _send_via_legacy(name, pane_id, message)
+        else:
+            _send_via_prompt(name, message)
+        notify("Sent", f"to {name} (fallback)")
+    except subprocess.CalledProcessError as e:
+        notify("Send failed", f"to {name}: {(e.stderr or e.stdout or str(e)).strip()}")
+    except Exception as e:
+        notify("Send failed", f"to {name}: {e}")
 
 
 def rename_agent(name):
@@ -352,15 +428,93 @@ def pick_workspace_for_new():
     return selected.split("|")[0]
 
 
-def create_agent(agent):
-    # ctrl-n: start a new agent via `herdr agent start` in a chosen workspace.
-    # Defaults are pre-filled and editable: argv defaults to `opencode`, cwd
-    # defaults to the selected agent's cwd (or the process cwd when there is
-    # no selected agent — e.g. the empty list case), name defaults to basename(argv).
-    # Supports --env KEY=VALUE for agents that need env vars (e.g. opencode).
+def herdr_version():
+    # Parse the running herdr version into a tuple, e.g. "herdr 0.8.2" -> (0, 8, 2).
+    # Used to branch create_agent() between the 0.7.x and 0.8.x `agent start`
+    # CLI signatures. Falls back to (0, 0, 0) so unknown/old versions take the
+    # legacy path (the one the plugin was originally written against).
+    try:
+        out = subprocess.run([HERDR, "--version"], capture_output=True, text=True, check=False)
+        text = (out.stdout or out.stderr or "").strip()
+        # tolerate "herdr 0.8.2" or bare "0.8.2"
+        tok = text.split()[-1] if text else ""
+        parts = []
+        for p in tok.split("."):
+            num = "".join(ch for ch in p if ch.isdigit())
+            parts.append(int(num) if num else 0)
+        while len(parts) < 3:
+            parts.append(0)
+        return tuple(parts[:3])
+    except Exception:
+        return (0, 0, 0)
+
+
+# Supported `--kind` values for `herdr agent start` (herdr >= 0.8). The kind
+# maps to a canonical executable; `-- <argv>` is no longer how you specify the
+# agent binary — `--kind` is required and the rest of argv goes after `--` as
+# extra args to that binary.
+AGENT_KINDS = [
+    "pi", "claude", "codex", "gemini", "cursor", "devin", "agy", "cline",
+    "omp", "mastracode", "opencode", "copilot", "kimi", "kiro", "droid",
+    "amp", "grok", "hermes", "kilo", "qodercli", "qwen", "maki",
+]
+
+
+def pick_kind(default_kind="opencode"):
+    # fzf over the fixed kind list, pre-selecting the default.
+    selected, _ = fzf_select(
+        AGENT_KINDS,
+        header="agent kind (--kind)",
+        prompt_text="kind> ",
+    )
+    if selected is None:
+        return None
+    kind = selected.strip()
+    if kind not in AGENT_KINDS:
+        notify("Create agent failed", f"unsupported kind: {kind}")
+        return None
+    return kind
+
+
+def split_clean_pane(workspace_id, cwd=None):
+    # `herdr agent start` (0.8+) requires --pane pointing at an *available*
+    # interactive shell. The picker can't guarantee any existing pane is idle,
+    # so we split a fresh one in the target workspace and start the agent there.
+    # `pane split` splits next to an EXISTING pane (it has no --workspace flag),
+    # so we grab any pane in the target workspace as the anchor.
+    # Returns the new pane_id, or None on failure.
+    try:
+        snap = json.loads(herdr("api", "snapshot"))["result"]["snapshot"]
+    except Exception as e:
+        notify("Create agent failed", f"snapshot failed: {e}")
+        return None
+    anchor = next((p["pane_id"] for p in snap.get("panes", [])
+                   if p.get("workspace_id") == workspace_id), None)
+    if not anchor:
+        notify("Create agent failed", f"no pane in workspace {workspace_id} to split from")
+        return None
+    args = ["pane", "split", anchor, "--direction", "down"]
+    if cwd:
+        args.extend(["--cwd", cwd])
+    try:
+        r = herdr(*args)
+        pane = json.loads(r)["result"]["pane"]
+        return pane.get("pane_id")
+    except subprocess.CalledProcessError as e:
+        notify("Create agent failed", f"pane split failed: {(e.stderr or e.stdout or str(e)).strip()}")
+        return None
+    except Exception as e:
+        notify("Create agent failed", f"pane split failed: {e}")
+        return None
+
+
+def _create_agent_legacy(agent):
+    # herdr < 0.8 signature: `agent start <NAME> --cwd <cwd> --workspace <ws>
+    # --no-focus [--env K=V]... -- <argv>`. argv is the agent binary directly
+    # (no --kind). This is the original plugin behavior; kept intact so the
+    # picker still works on 0.7.x installs.
     default_cwd = (agent.get("cwd") if agent else None) or os.getcwd()
 
-    # 1. command to run (argv) — default opencode, editable
     argv_str = prompt_prefill("Command to run (argv): ", "opencode")
     if not argv_str:
         return
@@ -373,21 +527,17 @@ def create_agent(agent):
         notify("Create agent failed", "empty command")
         return
 
-    # 2. agent name — default basename(argv[0])
     default_name = os.path.basename(argv[0])
     name = prompt_prefill("Agent name: ", default_name)
     if not name:
         name = default_name
 
-    # 3. cwd — default current agent's cwd, editable (delete/edit chars)
     cwd = prompt_prefill("Cwd: ", default_cwd)
     if not cwd:
         cwd = default_cwd
 
-    # 4. env vars — KEY=VAL space-separated, blank = none
     env_str = prompt("Env vars (KEY=VAL ..., blank=none): ")
 
-    # 5. target workspace
     ws_id = pick_workspace_for_new()
     if not ws_id:
         notify("Create agent cancelled", "no workspace chosen")
@@ -408,6 +558,85 @@ def create_agent(agent):
         res = json.loads(r)["result"]
         new_pane = res.get("agent", {}).get("pane_id", "?")
         notify("Agent created", f"{name} @ {ws_id} (pane {new_pane})")
+    except subprocess.CalledProcessError as e:
+        notify("Create agent failed", (e.stderr or e.stdout or str(e)).strip())
+    except Exception as e:
+        notify("Create agent failed", str(e))
+
+
+def create_agent(agent):
+    # ctrl-n: start a new agent via `herdr agent start`. The CLI signature
+    # changed in 0.8: 0.7.x used `--cwd/--workspace/--no-focus -- <argv>`;
+    # 0.8.x requires `--kind <KIND> --pane <ID> [-- ARGS...]`. Dispatch on the
+    # running herdr version so the picker works on both.
+    if herdr_version() < (0, 8, 0):
+        return _create_agent_legacy(agent)
+
+    # --- 0.8.x path ---
+    # We split a fresh pane in the chosen workspace (so --pane is always an
+    # available shell), then start the agent there.
+    default_cwd = (agent.get("cwd") if agent else None) or os.getcwd()
+
+    # 1. agent kind — default opencode
+    kind = pick_kind()
+    if not kind:
+        notify("Create agent cancelled", "no kind chosen")
+        return
+
+    # 2. agent name — default = kind
+    name = prompt_prefill("Agent name: ", kind)
+    if not name:
+        name = kind
+
+    # 3. cwd for the new pane — default current agent's cwd, editable
+    cwd = prompt_prefill("Cwd: ", default_cwd)
+    if not cwd:
+        cwd = default_cwd
+
+    # 4. extra argv after `--` (optional, blank = none)
+    argv_str = prompt("Extra args after -- (blank=none): ")
+    argv = []
+    if argv_str:
+        try:
+            argv = shlex.split(argv_str)
+        except ValueError as e:
+            notify("Create agent failed", f"bad extra args: {e}")
+            return
+
+    # 5. env vars — KEY=VAL space-separated, blank = none
+    env_str = prompt("Env vars (KEY=VAL ..., blank=none): ")
+
+    # 6. target workspace — split a fresh pane there
+    ws_id = pick_workspace_for_new()
+    if not ws_id:
+        notify("Create agent cancelled", "no workspace chosen")
+        return
+
+    pane_id = split_clean_pane(ws_id, cwd)
+    if not pane_id:
+        return
+
+    # Give the freshly split shell a moment to reach its prompt before herdr
+    # tries to detect an interactive agent inside it.
+    import time
+    time.sleep(0.6)
+
+    cmd = ["agent", "start", name, "--kind", kind, "--pane", pane_id]
+    if env_str:
+        try:
+            for tok in shlex.split(env_str):
+                if "=" in tok:
+                    cmd.extend(["--env", tok])
+        except ValueError as e:
+            notify("Create agent failed", f"bad env: {e}")
+            return
+    if argv:
+        cmd.extend(["--", *argv])
+    try:
+        r = herdr(*cmd)
+        res = json.loads(r)["result"]
+        new_pane = res.get("agent", {}).get("pane_id", pane_id)
+        notify("Agent created", f"{name} ({kind}) @ {ws_id} (pane {new_pane})")
     except subprocess.CalledProcessError as e:
         notify("Create agent failed", (e.stderr or e.stdout or str(e)).strip())
     except Exception as e:
