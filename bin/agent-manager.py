@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -35,8 +36,36 @@ def set_title(title):
             pass
 
 
+# Debug 模式：把插件实际执行的每条 herdr 命令记录到日志。
+# 开关（二选一，标志文件优先）：
+#   touch ~/.config/herdr/plugins/local/agent-manager/debug      # 开
+#   rm    ~/.config/herdr/plugins/local/agent-manager/debug      # 关
+#   或环境变量 HERDR_AGENT_MANAGER_DEBUG=1（插件跑在 herdr 起的 pane 里，
+#   shell 里 export 的变量通常传不进来，所以默认用标志文件）
+PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEBUG_FLAG = os.path.join(PLUGIN_DIR, "debug")
+DEBUG_LOG = os.path.join(PLUGIN_DIR, "debug.log")
+
+
+def debug_log(msg):
+    if not (os.path.exists(DEBUG_FLAG)
+            or os.environ.get("HERDR_AGENT_MANAGER_DEBUG") == "1"):
+        return
+    try:
+        from datetime import datetime
+        with open(DEBUG_LOG, "a") as f:
+            f.write(f"{datetime.now().isoformat(timespec='seconds')} {msg}\n")
+    except Exception:
+        pass
+
+
 def herdr(*args, capture=True):
-    r = subprocess.run([HERDR, *args], capture_output=True, text=True, check=True)
+    debug_log("$ herdr " + " ".join(shlex.quote(a) for a in args))
+    try:
+        r = subprocess.run([HERDR, *args], capture_output=True, text=True, check=True)
+    except subprocess.CalledProcessError as e:
+        debug_log("  FAILED: " + (e.stderr or e.stdout or str(e)).strip()[:2000])
+        raise
     return r.stdout
 
 
@@ -120,12 +149,17 @@ def prompt(question):
         return input(question).strip()
 
 
-def fzf_select(options, header=None, prompt_text="> ", colors="bg+:#3b4261,fg+:#ffffff", expect_keys=None):
+def fzf_select(options, header=None, prompt_text="> ", colors="bg+:#3b4261,fg+:#ffffff", expect_keys=None,
+               preview=None, preview_window=None):
     args = ["fzf", "--no-sort", "--prompt", prompt_text, "--color", colors]
     if header:
         args.extend(["--header", header])
     if expect_keys:
         args.extend(["--expect", ",".join(expect_keys)])
+    if preview:
+        args.extend(["--preview", preview])
+    if preview_window:
+        args.extend(["--preview-window", preview_window])
 
     result = subprocess.run(
         args,
@@ -238,6 +272,10 @@ def pick_agent(agents):
     fzf_colors = "bg+:#3b4261,fg+:#ffffff"
     fzf_header = (f"agents — enter:send  {MODIFY_KEY}:modify  "
                   f"ctrl-t:title  ctrl-l:label  ctrl-n:new-agent  ctrl-r:rename  ctrl-f:focus  ctrl-x:close  esc:quit")
+    blocked_n = sum(1 for a in agents if a.get("agent_status") == "blocked")
+    if blocked_n:
+        fzf_header = (f"⏸ {blocked_n} 个 agent 等待输入 — "
+                      f"选中后回车直接应答(允许/拒绝)   " + fzf_header)
     header_visible = format_header_line(headers, widths)
     lines = [header_visible]
     for a in agents:
@@ -299,6 +337,42 @@ def pick_agent(agents):
 
     name = selection.split("|")[0] if selection else ""
     return name, action
+
+
+def respond_blocked(agent):
+    # 选中 blocked 状态的 agent 后的应答界面：预览窗实时显示它卡住的对话框，
+    # 动作经 herdr agent send-keys 远程下发（人不用切到那个 pane）。
+    name = agent["name"]
+    proj = os.path.basename(agent.get("cwd") or "?")
+    preview = (f"{shlex.quote(HERDR)} agent read {shlex.quote(name)} "
+               f"--source visible --lines 40 2>/dev/null | tail -40")
+    opts = [
+        "✅ 允许  (Enter 确认当前高亮项)",
+        "❌ 拒绝  (Esc 取消/否定)",
+        "🔢 选择选项  (输入选项号后回车)",
+        "⏭  跳过  (保持等待，稍后处理)",
+    ]
+    sel, _ = fzf_select(
+        opts,
+        header=f"⏸ {name} @ {proj} 等待输入 — 右侧预览=它卡住的界面",
+        prompt_text="action> ",
+        preview=preview,
+        preview_window="right:60%",
+    )
+    if sel is None:
+        return
+    if sel.startswith("✅"):
+        herdr("agent", "send-keys", name, "enter", capture=False)
+        notify(f"已允许 {name}", f"已发送 Enter，{proj} 的任务继续")
+    elif sel.startswith("❌"):
+        herdr("agent", "send-keys", name, "esc", capture=False)
+        notify(f"已拒绝 {name}", "已发送 Esc，该步操作被取消")
+    elif sel.startswith("🔢"):
+        num = prompt("选项号 (如 1/2/3): ").strip()
+        if num:
+            herdr("agent", "send-keys", name, num, capture=False)
+            herdr("agent", "send-keys", name, "enter", capture=False)
+            notify(f"已选择选项 {num}", f"{name} @ {proj}")
 
 
 def _send_via_prompt(name, message):
@@ -460,18 +534,55 @@ AGENT_KINDS = [
 ]
 
 
-def pick_kind(default_kind="opencode"):
-    # fzf over the fixed kind list, pre-selecting the default.
+def supported_kinds():
+    # 动态获取 herdr 当前支持的 --kind 列表：socket API schema 里 kind 只是
+    # {"type": "string"}（无枚举），但 CLI help 的 possible values 行有完整
+    # 列表。解析失败时回退到上面的硬编码列表，保证 picker 永远可用。
+    try:
+        out = subprocess.run(
+            [HERDR, "agent", "start", "--help"],
+            capture_output=True, text=True, timeout=10,
+        ).stdout
+        m = re.search(r"possible values:\s*([a-z0-9_,\s]+)", out)
+        if m:
+            kinds = [k.strip() for k in m.group(1).split(",") if k.strip()]
+            if kinds:
+                return kinds
+    except Exception:
+        pass
+    return AGENT_KINDS
+
+# 本机没有 claude 二进制，claude kind 通过 shim 实际启动 kscc（见
+# /usr/local/node-v24.14.0-darwin-arm64/bin/claude）。展示用标签让 picker
+# 里能认出它是 kscc；传给 herdr agent start 的仍是合法 kind "claude"。
+KIND_LABELS = {
+    "claude": "claude (runs kscc)",
+}
+
+# 默认选中 claude：本机主力 agent 是 kscc（claude shim）。
+DEFAULT_KIND = "claude"
+
+
+def pick_kind(default_kind=DEFAULT_KIND):
+    # fzf over the kind list fetched from the CLI (fallback: hardcoded).
+    # fzf 的空查询回车选中列表第一行，所以把默认 kind 排到最前，
+    # "一路回车"才会创建默认 agent 而不是 pi。
+    kinds = supported_kinds()
+    if default_kind in kinds:
+        kinds.remove(default_kind)
+        kinds.insert(0, default_kind)
+    labels = [KIND_LABELS.get(k, k) for k in kinds]
+    label_to_kind = {KIND_LABELS.get(k, k): k for k in kinds}
     selected, _ = fzf_select(
-        AGENT_KINDS,
+        labels,
         header="agent kind (--kind)",
         prompt_text="kind> ",
     )
     if selected is None:
         return None
-    kind = selected.strip()
-    if kind not in AGENT_KINDS:
-        notify("Create agent failed", f"unsupported kind: {kind}")
+    kind = label_to_kind.get(selected.strip())
+    if kind not in kinds:
+        notify("Create agent failed", f"unsupported kind: {selected.strip()}")
         return None
     return kind
 
@@ -669,6 +780,12 @@ def main():
             continue
         if not empty and agent is None:
             print(f"agent '{name}' not found")
+            continue
+
+        # 选中的 agent 正被对话框卡住（等权限/确认/选项）→ 直接进应答界面：
+        # 预览=它卡住的屏幕，允许/拒绝经 send-keys 远程下发。
+        if agent is not None and agent.get("agent_status") == "blocked":
+            respond_blocked(agent)
             continue
 
         if action == MODIFY_KEY:
