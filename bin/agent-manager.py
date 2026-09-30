@@ -3,8 +3,15 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
+
+try:
+    # 让 input() 具备行编辑能力：ctrl+a/e、左右方向键、历史记录
+    import readline  # noqa: F401
+except ImportError:
+    pass
 
 HERDR = os.environ.get("HERDR_BIN_PATH", "herdr")
 # We use Ctrl-O for "edit/modify". Avoid Ctrl-E: herdr's herdr-navigator plugin
@@ -30,8 +37,12 @@ def set_title(title):
     pane_id = os.environ.get("HERDR_PANE_ID")
     if pane_id:
         try:
-            subprocess.run([HERDR, "pane", "rename", pane_id, title],
-                           capture_output=True, text=True, check=False)
+            subprocess.run(
+                [HERDR, "pane", "rename", pane_id, title],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
         except Exception:
             pass
 
@@ -48,11 +59,13 @@ DEBUG_LOG = os.path.join(PLUGIN_DIR, "debug.log")
 
 
 def debug_log(msg):
-    if not (os.path.exists(DEBUG_FLAG)
-            or os.environ.get("HERDR_AGENT_MANAGER_DEBUG") == "1"):
+    if not (
+        os.path.exists(DEBUG_FLAG) or os.environ.get("HERDR_AGENT_MANAGER_DEBUG") == "1"
+    ):
         return
     try:
         from datetime import datetime
+
         with open(DEBUG_LOG, "a") as f:
             f.write(f"{datetime.now().isoformat(timespec='seconds')} {msg}\n")
     except Exception:
@@ -78,15 +91,28 @@ def move_pane(pane_id, *, tab_id=None, new_tab_workspace_id=None, split="right")
     _unzoom_source_tab(pane_id)
     try:
         if tab_id:
-            r = herdr("pane", "move", pane_id, "--tab", tab_id, "--split", split, "--no-focus")
+            r = herdr(
+                "pane", "move", pane_id, "--tab", tab_id, "--split", split, "--no-focus"
+            )
         else:
-            r = herdr("pane", "move", pane_id, "--new-tab", "--workspace", new_tab_workspace_id, "--no-focus")
+            r = herdr(
+                "pane",
+                "move",
+                pane_id,
+                "--new-tab",
+                "--workspace",
+                new_tab_workspace_id,
+                "--no-focus",
+            )
         mr = json.loads(r)["result"]["move_result"]
         if mr.get("changed", False):
             return True, None
         reason = mr.get("reason") or ""
         if reason == "zoomed_tab":
-            return False, "source tab is zoomed and could not be unzoomed — unzoom it (herdr pane zoom <pane> --off) and retry"
+            return (
+                False,
+                "source tab is zoomed and could not be unzoomed — unzoom it (herdr pane zoom <pane> --off) and retry",
+            )
         return False, _refusal_reason(pane_id)
     except subprocess.CalledProcessError as e:
         return False, (e.stderr or e.stdout or str(e)).strip()
@@ -100,7 +126,14 @@ def _unzoom_source_tab(pane_id):
         pane = next((p for p in snap["panes"] if p["pane_id"] == pane_id), None)
         if not pane:
             return None
-        layout = next((l for l in snap.get("layouts", []) if l.get("tab_id") == pane.get("tab_id")), None)
+        layout = next(
+            (
+                l
+                for l in snap.get("layouts", [])
+                if l.get("tab_id") == pane.get("tab_id")
+            ),
+            None,
+        )
         if layout and layout.get("zoomed"):
             herdr("pane", "zoom", pane_id, "--off")
         return pane.get("tab_id")
@@ -116,11 +149,17 @@ def _refusal_reason(pane_id):
         if tgt is None:
             return "herdr refused to move this pane"
         if cur and pane_id == cur:
-            return "this is the picker's own pane — it can't move while the picker is open"
+            return (
+                "this is the picker's own pane — it can't move while the picker is open"
+            )
         if tgt.get("agent_session"):
-            return ("this pane is the active kscc/claude session you're in right now "
-                    "— exit/stop it first, or move it from a different pane")
-        return "herdr refused to move this pane (it may be running a foreground process)"
+            return (
+                "this pane is the active kscc/claude session you're in right now "
+                "— exit/stop it first, or move it from a different pane"
+            )
+        return (
+            "herdr refused to move this pane (it may be running a foreground process)"
+        )
     except Exception:
         return "herdr refused to move this pane"
 
@@ -138,19 +177,33 @@ def notify(title, body=""):
 def prompt(question):
     # Read from /dev/tty so interactive input works even when stdin is a pipe
     # (fzf is launched with capture_output=True, leaving stdin non-TTY).
+    # input() 配合 readline 提供行编辑（ctrl+a/e、方向键）；提示语手动写 tty，
+    # 因为 stdout 被 capture_output 捕获，input(question) 的提示语会不可见。
     try:
         with open("/dev/tty", "r+") as tty:
             tty.write(question)
             tty.flush()
-            return tty.readline().strip()
+            old_stdin = sys.stdin
+            sys.stdin = tty
+            try:
+                return input().strip()
+            finally:
+                sys.stdin = old_stdin
     except OSError:
         if not sys.stdin.isatty():
             sys.exit("stdin is not a TTY and /dev/tty unavailable")
         return input(question).strip()
 
 
-def fzf_select(options, header=None, prompt_text="> ", colors="bg+:#3b4261,fg+:#ffffff", expect_keys=None,
-               preview=None, preview_window=None):
+def fzf_select(
+    options,
+    header=None,
+    prompt_text="> ",
+    colors="bg+:#3b4261,fg+:#ffffff",
+    expect_keys=None,
+    preview=None,
+    preview_window=None,
+):
     args = ["fzf", "--no-sort", "--prompt", prompt_text, "--color", colors]
     if header:
         args.extend(["--header", header])
@@ -204,10 +257,14 @@ def pick_target_tab_anywhere():
     lines = []
     for t in snap["tabs"]:
         ws_label = workspaces.get(t.get("workspace_id"), "-")
-        lines.append(f"{t['tab_id']}|{ws_label} / {t.get('label','-')}  ({t.get('pane_count',0)} panes)")
+        lines.append(
+            f"{t['tab_id']}|{ws_label} / {t.get('label', '-')}  ({t.get('pane_count', 0)} panes)"
+        )
     if not lines:
         return None
-    selected, _ = fzf_select(lines, header="select target tab (any workspace)", prompt_text="tab> ")
+    selected, _ = fzf_select(
+        lines, header="select target tab (any workspace)", prompt_text="tab> "
+    )
     if selected is None:
         return None
     return selected.split("|")[0]
@@ -260,9 +317,12 @@ def pick_agent(agents):
         pane_labels = {}
 
     headers = ["NAME", "WORKSPACE*", "STATUS~", "TITLE"]
-    data_fields = [agent_display_fields(a, pane_labels.get(a.get("pane_id"))) for a in agents]
+    data_fields = [
+        agent_display_fields(a, pane_labels.get(a.get("pane_id"))) for a in agents
+    ]
     widths = [
-        max(len(headers[i]), max(len(f[i]) for f in data_fields) if data_fields else 0) + 2
+        max(len(headers[i]), max(len(f[i]) for f in data_fields) if data_fields else 0)
+        + 2
         for i in range(4)
     ]
 
@@ -270,29 +330,43 @@ def pick_agent(agents):
     preview = os.path.join(plugin_root, "bin", "agent-preview.py") + " {1}"
 
     fzf_colors = "bg+:#3b4261,fg+:#ffffff"
-    fzf_header = (f"agents — enter:send  {MODIFY_KEY}:modify  "
-                  f"ctrl-t:title  ctrl-l:label  ctrl-n:new-agent  ctrl-r:rename  ctrl-f:focus  ctrl-x:close  esc:quit")
+    fzf_header = (
+        f"agents — enter:send  {MODIFY_KEY}:modify  "
+        f"ctrl-t:title  ctrl-l:label  ctrl-n:new-agent  ctrl-r:rename  ctrl-f:focus  ctrl-x:close  esc:quit"
+    )
     blocked_n = sum(1 for a in agents if a.get("agent_status") == "blocked")
     if blocked_n:
-        fzf_header = (f"⏸ {blocked_n} 个 agent 等待输入 — "
-                      f"选中后回车直接应答(允许/拒绝)   " + fzf_header)
+        fzf_header = (
+            f"⏸ {blocked_n} 个 agent 等待输入 — "
+            f"选中后回车直接应答(允许/拒绝)   " + fzf_header
+        )
     header_visible = format_header_line(headers, widths)
     lines = [header_visible]
     for a in agents:
-        lines.append(format_agent_line(agent_display_fields(a, pane_labels.get(a.get("pane_id"))), widths))
+        lines.append(
+            format_agent_line(
+                agent_display_fields(a, pane_labels.get(a.get("pane_id"))), widths
+            )
+        )
 
     result = subprocess.run(
-        ["fzf", "--no-sort",
-               "--layout=reverse",  # header (lines[0]) pinned at top, agents below
-               "--delimiter=|",
-               "--with-nth=2",
-               "--header-lines=1",
-               "--prompt=agent> ",
-               "--header", fzf_header,
-               "--preview", preview,
-               "--preview-window=right:50%",
-               f"--expect={MODIFY_KEY},ctrl-r,ctrl-f,ctrl-x,ctrl-t,ctrl-l,ctrl-n",
-               "--color", fzf_colors],
+        [
+            "fzf",
+            "--no-sort",
+            "--layout=reverse",  # header (lines[0]) pinned at top, agents below
+            "--delimiter=|",
+            "--with-nth=2",
+            "--header-lines=1",
+            "--prompt=agent> ",
+            "--header",
+            fzf_header,
+            "--preview",
+            preview,
+            "--preview-window=right:50%",
+            f"--expect={MODIFY_KEY},ctrl-r,ctrl-f,ctrl-x,ctrl-t,ctrl-l,ctrl-n",
+            "--color",
+            fzf_colors,
+        ],
         input="\n".join(lines),
         capture_output=True,
         text=True,
@@ -316,8 +390,15 @@ def pick_agent(agents):
     # look like it does nothing. Instead, since we know the expect keys, treat
     # line[0] as the action iff it is one of them; the selection is whatever
     # follows (possibly empty).
-    EXPECT_KEYS = {MODIFY_KEY, "ctrl-r", "ctrl-f", "ctrl-x",
-                  "ctrl-t", "ctrl-l", "ctrl-n"}
+    EXPECT_KEYS = {
+        MODIFY_KEY,
+        "ctrl-r",
+        "ctrl-f",
+        "ctrl-x",
+        "ctrl-t",
+        "ctrl-l",
+        "ctrl-n",
+    }
     lines = result.stdout.split("\n")
     if lines and lines[-1] == "":
         lines.pop()
@@ -344,8 +425,10 @@ def respond_blocked(agent):
     # 动作经 herdr agent send-keys 远程下发（人不用切到那个 pane）。
     name = agent["name"]
     proj = os.path.basename(agent.get("cwd") or "?")
-    preview = (f"{shlex.quote(HERDR)} agent read {shlex.quote(name)} "
-               f"--source visible --lines 40 2>/dev/null | tail -40")
+    preview = (
+        f"{shlex.quote(HERDR)} agent read {shlex.quote(name)} "
+        f"--source visible --lines 40 2>/dev/null | tail -40"
+    )
     opts = [
         "✅ 允许  (Enter 确认当前高亮项)",
         "❌ 拒绝  (Esc 取消/否定)",
@@ -428,7 +511,12 @@ def rename_agent(name):
 
 
 def set_pane_label(agent):
-    cur_label = json.loads(herdr("pane", "get", agent["pane_id"]))["result"]["pane"].get("label") or ""
+    cur_label = (
+        json.loads(herdr("pane", "get", agent["pane_id"]))["result"]["pane"].get(
+            "label"
+        )
+        or ""
+    )
     cur = cur_label or agent.get("terminal_title_stripped", "")
     new = prompt(f"Set label for pane {agent['pane_id']} (current: {cur}): ")
     if new:
@@ -464,11 +552,20 @@ def prompt_prefill(question, prefill=""):
     items = [prefill] if prefill else []
     try:
         result = subprocess.run(
-            ["fzf", "--no-sort", "--print-query", "--prompt", f"{question} ",
-             "--header", "(Enter=accept  type to edit  Ctrl-u clears)",
-             "--color", "bg+:#3b4261,fg+:#ffffff"],
+            [
+                "fzf",
+                "--no-sort",
+                "--print-query",
+                "--prompt",
+                f"{question} ",
+                "--header",
+                "(Enter=accept  type to edit  Ctrl-u clears)",
+                "--color",
+                "bg+:#3b4261,fg+:#ffffff",
+            ],
             input="\n".join(items),
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
     except Exception:
         # last-resort fallback: non-editable prompt via /dev/tty
@@ -493,10 +590,13 @@ def prompt_prefill(question, prefill=""):
 def pick_workspace_for_new():
     # Choose which workspace to start a new agent in.
     workspaces = list_workspaces()
-    lines = [f"{w['workspace_id']}|{w.get('label','-')}  ({w['workspace_id']})"
-             for w in workspaces]
-    selected, _ = fzf_select(lines, header="start agent in which workspace?",
-                             prompt_text="workspace> ")
+    lines = [
+        f"{w['workspace_id']}|{w.get('label', '-')}  ({w['workspace_id']})"
+        for w in workspaces
+    ]
+    selected, _ = fzf_select(
+        lines, header="start agent in which workspace?", prompt_text="workspace> "
+    )
     if selected is None:
         return None
     return selected.split("|")[0]
@@ -508,7 +608,9 @@ def herdr_version():
     # CLI signatures. Falls back to (0, 0, 0) so unknown/old versions take the
     # legacy path (the one the plugin was originally written against).
     try:
-        out = subprocess.run([HERDR, "--version"], capture_output=True, text=True, check=False)
+        out = subprocess.run(
+            [HERDR, "--version"], capture_output=True, text=True, check=False
+        )
         text = (out.stdout or out.stderr or "").strip()
         # tolerate "herdr 0.8.2" or bare "0.8.2"
         tok = text.split()[-1] if text else ""
@@ -528,9 +630,28 @@ def herdr_version():
 # agent binary — `--kind` is required and the rest of argv goes after `--` as
 # extra args to that binary.
 AGENT_KINDS = [
-    "pi", "claude", "codex", "gemini", "cursor", "devin", "agy", "cline",
-    "omp", "mastracode", "opencode", "copilot", "kimi", "kiro", "droid",
-    "amp", "grok", "hermes", "kilo", "qodercli", "qwen", "maki",
+    "pi",
+    "claude",
+    "codex",
+    "gemini",
+    "cursor",
+    "devin",
+    "agy",
+    "cline",
+    "omp",
+    "mastracode",
+    "opencode",
+    "copilot",
+    "kimi",
+    "kiro",
+    "droid",
+    "amp",
+    "grok",
+    "hermes",
+    "kilo",
+    "qodercli",
+    "qwen",
+    "maki",
 ]
 
 
@@ -541,7 +662,9 @@ def supported_kinds():
     try:
         out = subprocess.run(
             [HERDR, "agent", "start", "--help"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         ).stdout
         m = re.search(r"possible values:\s*([a-z0-9_,\s]+)", out)
         if m:
@@ -551,6 +674,7 @@ def supported_kinds():
     except Exception:
         pass
     return AGENT_KINDS
+
 
 # 本机没有 claude 二进制，claude kind 通过 shim 实际启动 kscc（见
 # /usr/local/node-v24.14.0-darwin-arm64/bin/claude）。展示用标签让 picker
@@ -599,10 +723,18 @@ def split_clean_pane(workspace_id, cwd=None):
     except Exception as e:
         notify("Create agent failed", f"snapshot failed: {e}")
         return None
-    anchor = next((p["pane_id"] for p in snap.get("panes", [])
-                   if p.get("workspace_id") == workspace_id), None)
+    anchor = next(
+        (
+            p["pane_id"]
+            for p in snap.get("panes", [])
+            if p.get("workspace_id") == workspace_id
+        ),
+        None,
+    )
     if not anchor:
-        notify("Create agent failed", f"no pane in workspace {workspace_id} to split from")
+        notify(
+            "Create agent failed", f"no pane in workspace {workspace_id} to split from"
+        )
         return None
     args = ["pane", "split", anchor, "--direction", "down"]
     if cwd:
@@ -612,7 +744,10 @@ def split_clean_pane(workspace_id, cwd=None):
         pane = json.loads(r)["result"]["pane"]
         return pane.get("pane_id")
     except subprocess.CalledProcessError as e:
-        notify("Create agent failed", f"pane split failed: {(e.stderr or e.stdout or str(e)).strip()}")
+        notify(
+            "Create agent failed",
+            f"pane split failed: {(e.stderr or e.stdout or str(e)).strip()}",
+        )
         return None
     except Exception as e:
         notify("Create agent failed", f"pane split failed: {e}")
@@ -675,6 +810,84 @@ def _create_agent_legacy(agent):
         notify("Create agent failed", str(e))
 
 
+def slug_to_path(slug):
+    """把项目 slug（如 -Users-liushuai--config-herdr-plugins-local-agent-manager）
+    还原为文件系统路径。'/'和'.'编码时都变成'-'，目录名里的'-'有歧义，
+    用存在性检查回溯解析；解析失败返回 None。"""
+    parts = slug.lstrip("-").split("-")
+    # '' 段来自 '.' 被编码成 '-'（如 .config -> - -> --config）
+    segs, i = [], 0
+    while i < len(parts):
+        if parts[i] == "" and i + 1 < len(parts):
+            segs.append("." + parts[i + 1])
+            i += 2
+        else:
+            segs.append(parts[i])
+            i += 1
+    found = []
+
+    def walk(idx, cur):
+        if idx == len(segs):
+            if os.path.isdir(cur):
+                found.append(cur)
+            return
+        for k in range(idx, len(segs)):
+            seg = "-".join(segs[idx : k + 1])
+            walk(k + 1, os.path.join(cur, seg) if cur else "/" + seg)
+
+    walk(0, "")
+    return found[0] if found else None
+
+
+def find_resume_session(argv):
+    """argv 含 --resume <id> 时定位会话：返回 (存储, 项目slug)。
+    存储是 'kscc' 或 'claude'（后者为旧版 Claude Code 所存，kscc 读不到）；
+    找不到返回 None。"""
+    if "--resume" not in argv:
+        return None
+    i = argv.index("--resume")
+    if i + 1 >= len(argv):
+        return None
+    sid = argv[i + 1]
+    for base in (".kscc", ".claude"):
+        root = os.path.expanduser(f"~/{base}/projects")
+        if not os.path.isdir(root):
+            continue
+        for slug in os.listdir(root):
+            if os.path.exists(os.path.join(root, slug, sid + ".jsonl")):
+                return base[1:], slug
+    return None
+
+
+def resolve_resume_cwd(cwd, argv):
+    """Extra args 带 --resume 时的 Cwd 自动校正 + 旧会话自动迁移。
+    返回（可能被修正的）cwd。"""
+    hit = find_resume_session(argv)
+    if not hit:
+        return cwd
+    storage, slug = hit
+    sid = argv[argv.index("--resume") + 1]
+    if storage == "claude":
+        # 会话在 ~/.claude/projects（旧版 Claude Code 所存），拷到 kscc 存储
+        try:
+            src = os.path.expanduser(f"~/.claude/projects/{slug}")
+            dst = os.path.expanduser(f"~/.kscc/projects/{slug}")
+            os.makedirs(dst, exist_ok=True)
+            shutil.copy2(os.path.join(src, sid + ".jsonl"), dst)
+            side = os.path.join(src, sid)
+            if os.path.isdir(side):
+                shutil.copytree(side, os.path.join(dst, sid), dirs_exist_ok=True)
+            notify("旧会话已迁移", f"{sid[:8]}… 从 ~/.claude 拷到 ~/.kscc")
+        except Exception as e:
+            notify("会话迁移失败", str(e))
+    proj = slug_to_path(slug)
+    if proj and proj != cwd:
+        ans = prompt_prefill(f"会话属于项目 {proj}，Cwd 改为: ", proj)
+        if ans:
+            cwd = ans
+    return cwd
+
+
 def create_agent(agent):
     # ctrl-n: start a new agent via `herdr agent start`. The CLI signature
     # changed in 0.8: 0.7.x used `--cwd/--workspace/--no-focus -- <argv>`;
@@ -717,6 +930,9 @@ def create_agent(agent):
     # 5. env vars — KEY=VAL space-separated, blank = none
     env_str = prompt("Env vars (KEY=VAL ..., blank=none): ")
 
+    # 5.5 --resume 便捷处理：自动定位会话所属项目、改写 Cwd、迁移旧会话
+    cwd = resolve_resume_cwd(cwd, argv)
+
     # 6. target workspace — split a fresh pane there
     ws_id = pick_workspace_for_new()
     if not ws_id:
@@ -730,6 +946,7 @@ def create_agent(agent):
     # Give the freshly split shell a moment to reach its prompt before herdr
     # tries to detect an interactive agent inside it.
     import time
+
     time.sleep(0.6)
 
     cmd = ["agent", "start", name, "--kind", kind, "--pane", pane_id]
@@ -771,7 +988,9 @@ def main():
         empty = not agents
 
         name, action = pick_agent(agents)
-        agent = next((a for a in agents if a["name"] == name), None) if not empty else None
+        agent = (
+            next((a for a in agents if a["name"] == name), None) if not empty else None
+        )
         # On an empty list only "create a new agent" (ctrl-n) is meaningful;
         # send/rename/focus/close all need a selected agent, so steer the user
         # to ctrl-n instead of crashing on the None agent.
@@ -813,17 +1032,24 @@ def main():
             elif sel == "Move to workspace":
                 workspaces = list_workspaces()
                 ws_lines = [
-                    f"{w['workspace_id']}|{w.get('label','-')}"
-                    for w in workspaces
+                    f"{w['workspace_id']}|{w.get('label', '-')}" for w in workspaces
                 ]
-                selected, _ = fzf_select(ws_lines, header="select target workspace", prompt_text="workspace> ")
+                selected, _ = fzf_select(
+                    ws_lines,
+                    header="select target workspace",
+                    prompt_text="workspace> ",
+                )
                 if selected:
                     ws_id = selected.split("|")[0]
-                    changed, err = move_pane(agent["pane_id"], new_tab_workspace_id=ws_id)
+                    changed, err = move_pane(
+                        agent["pane_id"], new_tab_workspace_id=ws_id
+                    )
                     if changed:
                         notify("Agent moved", f"{name} → workspace {ws_id}")
                     else:
-                        notify("Move failed", err or "herdr refused (active agent pane?)")
+                        notify(
+                            "Move failed", err or "herdr refused (active agent pane?)"
+                        )
             elif sel == "Move to tab":
                 tab_id = pick_target_tab_anywhere()
                 if tab_id:
@@ -831,14 +1057,18 @@ def main():
                     if changed:
                         notify("Agent moved", f"{name} → tab {tab_id}")
                     else:
-                        notify("Move failed", err or "herdr refused (active agent pane?)")
+                        notify(
+                            "Move failed", err or "herdr refused (active agent pane?)"
+                        )
             elif sel == "New workspace":
                 new_workspace(agent)
             elif sel == "Focus agent":
                 herdr("agent", "focus", name, capture=False)
                 break
             elif sel == "Close pane":
-                confirm = prompt(f"Close pane {agent['pane_id']} for agent '{name}'? [y/N] ")
+                confirm = prompt(
+                    f"Close pane {agent['pane_id']} for agent '{name}'? [y/N] "
+                )
                 if confirm.lower() == "y":
                     herdr("pane", "close", agent["pane_id"], capture=False)
                 break
@@ -865,7 +1095,9 @@ def main():
             break
 
         if action == "ctrl-x":
-            confirm = prompt(f"Close pane {agent['pane_id']} for agent '{name}'? [y/N] ")
+            confirm = prompt(
+                f"Close pane {agent['pane_id']} for agent '{name}'? [y/N] "
+            )
             if confirm.lower() == "y":
                 herdr("pane", "close", agent["pane_id"], capture=False)
             break
