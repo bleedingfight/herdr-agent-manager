@@ -681,20 +681,29 @@ def supported_kinds():
 # 里能认出它是 kscc；传给 herdr agent start 的仍是合法 kind "claude"。
 KIND_LABELS = {
     "claude": "claude (runs kscc)",
+    "kscc": "kscc (Kscc CLI, direct)",
 }
 
 # 默认选中 claude：本机主力 agent 是 kscc（claude shim）。
 DEFAULT_KIND = "claude"
 
 
+# 默认选中 kscc：本机主力 agent 是 kscc，且直接以 kscc 启动（不借 claude kind）。
+DEFAULT_KIND = "kscc"
+
+# kscc 作为伪 kind：herdr 内置 kind 列表里没有 kscc，选中后不走
+# `agent start`，而是 split 新 pane 后用 `pane run` 直接执行 kscc。
+PSEUDO_KINDS = ("kscc",)
+
+
 def pick_kind(default_kind=DEFAULT_KIND):
     # fzf over the kind list fetched from the CLI (fallback: hardcoded).
     # fzf 的空查询回车选中列表第一行，所以把默认 kind 排到最前，
     # "一路回车"才会创建默认 agent 而不是 pi。
-    kinds = supported_kinds()
+    kinds = [k for k in supported_kinds() if k not in PSEUDO_KINDS]
     if default_kind in kinds:
         kinds.remove(default_kind)
-        kinds.insert(0, default_kind)
+    kinds.insert(0, default_kind)
     labels = [KIND_LABELS.get(k, k) for k in kinds]
     label_to_kind = {KIND_LABELS.get(k, k): k for k in kinds}
     selected, _ = fzf_select(
@@ -754,6 +763,169 @@ def split_clean_pane(workspace_id, cwd=None):
         return None
 
 
+# kind → 实际启动的 agent 二进制（本机 claude 走 shim 实际启动 kscc，
+# 与上方 KIND_LABELS 的说明一致；日志据此记录真实命令）。
+EFFECTIVE_BIN = {"claude": "kscc"}
+
+
+def log_agent_start_cmd(cmd, env_str=""):
+    """记录最终执行的 agent start 命令，便于事后回溯（如 --resume 恢复）。
+    行尾追加实际启动的 agent 命令（kind 是 shim 时如 claude→kscc）。
+    环境变量控制：
+      AGENT_MANAGER_START_LOG=0/false/off  关闭记录（默认开启）
+      AGENT_MANAGER_START_LOG_FILE=<path>  自定义日志路径（默认
+                                           ~/.config/herdr/agent-starts.log）
+    """
+    try:
+        from datetime import datetime
+        if os.environ.get("AGENT_MANAGER_START_LOG", "").strip().lower() in (
+            "0", "false", "off",
+        ):
+            return
+        default_log = os.path.expanduser("~/.config/herdr/agent-starts.log")
+        log_path = os.environ.get("AGENT_MANAGER_START_LOG_FILE", "").strip()
+        if not log_path:
+            log_path = default_log
+        line = (
+            f"{datetime.now().isoformat(timespec='seconds')} herdr "
+            + " ".join(shlex.quote(t) for t in cmd)
+        )
+        if env_str:
+            line += "  # env: " + env_str
+        # 换算实际启动的 agent 命令，避免日志里 kind 与真实二进制不符
+        eff = None
+        if "--kind" in cmd:
+            kind = cmd[cmd.index("--kind") + 1] if cmd.index("--kind") + 1 < len(cmd) else None
+            eff = EFFECTIVE_BIN.get(kind)
+        if eff:
+            i = cmd.index("--") if "--" in cmd else len(cmd)
+            line += "  # 实际启动: " + " ".join([eff, *cmd[i + 1:]])
+        with open(log_path, "a") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass  # 记录失败不影响创建流程
+
+
+def pick_tab_in_workspace(ws_id):
+    """在指定 workspace 里选一个 tab（agent 将作为该 tab 下新 split 的 pane）。"""
+    try:
+        tabs = list_tabs(ws_id)
+    except Exception as e:
+        notify("Create agent failed", f"tab list failed: {e}")
+        return None
+    if not tabs:
+        notify("Create agent failed", f"workspace {ws_id} has no tabs")
+        return None
+    items = [
+        f"{t['tab_id']}|{t.get('label') or t['tab_id']} ({t.get('pane_count', '?')} panes)"
+        for t in tabs
+    ]
+    selected, _ = fzf_select(items, header=f"tab in workspace {ws_id}", prompt_text="tab> ")
+    if selected is None:
+        return None
+    return selected.split("|", 1)[0].strip()
+
+
+def split_pane_in_tab(tab_id, cwd=None):
+    """在指定 tab 里 split 一个新 pane（供 agent 使用），返回 pane_id。
+    anchor 用该 tab 里的第一个 pane。"""
+    try:
+        snap = json.loads(herdr("api", "snapshot"))["result"]["snapshot"]
+    except Exception as e:
+        notify("Create agent failed", f"snapshot failed: {e}")
+        return None
+    anchor = next(
+        (
+            p["pane_id"]
+            for p in snap.get("panes", [])
+            if p.get("tab_id") == tab_id
+        ),
+        None,
+    )
+    if not anchor:
+        notify("Create agent failed", f"no pane in tab {tab_id} to split from")
+        return None
+    args = ["pane", "split", anchor, "--direction", "down", "--no-focus"]
+    if cwd:
+        args.extend(["--cwd", cwd])
+    try:
+        r = json.loads(herdr(*args))
+        return r["result"]["pane"].get("pane_id")
+    except subprocess.CalledProcessError as e:
+        notify(
+            "Create agent failed",
+            f"pane split failed: {(e.stderr or e.stdout or str(e)).strip()}",
+        )
+        return None
+    except Exception as e:
+        notify("Create agent failed", f"pane split failed: {e}")
+        return None
+
+
+def create_agent_tab(ws_id, cwd=None, label=None):
+    """为新 agent 创建独立 tab（替代 split_clean_pane 的"随机 anchor split"）。
+    返回 (tab_id, root_pane_id)，失败返回 (None, None)。"""
+    args = ["tab", "create", "--workspace", ws_id]
+    if cwd:
+        args += ["--cwd", cwd]
+    if label:
+        args += ["--label", label]
+    try:
+        r = json.loads(herdr(*args))["result"]
+        return r.get("tab", {}).get("tab_id"), r.get("root_pane", {}).get("pane_id")
+    except subprocess.CalledProcessError as e:
+        notify(
+            "Create agent failed",
+            f"tab create failed: {(e.stderr or e.stdout or str(e)).strip()}",
+        )
+    except Exception as e:
+        notify("Create agent failed", f"tab create failed: {e}")
+    return None, None
+
+
+def _create_kscc_agent(name, cwd, argv, env_str="", ws_id=None, tab_id=None):
+    """kscc 直接启动：workspace/tab 由 create_agent 提前选好传入，在该 tab 下
+    split 新 pane，`pane run` 执行 kscc，并立即通过 pane report-agent 注册为
+    herdr 托管 agent（后续 working/idle 状态由 kscc hooks 更新）。
+    env 以 `env K=V` 前缀方式传入。"""
+    if not ws_id:
+        ws_id = pick_workspace_for_new()
+        if not ws_id:
+            notify("Create agent cancelled", "no workspace chosen")
+            return
+    if not tab_id:
+        tab_id = pick_tab_in_workspace(ws_id)
+        if not tab_id:
+            return
+    pane_id = split_pane_in_tab(tab_id, cwd)
+    if not pane_id:
+        return
+    import time
+
+    time.sleep(0.6)  # 等 shell 到提示符，同 agent start 流程
+    env_tokens = [
+        tok for tok in shlex.split(env_str) if "=" in tok
+    ] if env_str else []
+    run_cmd = (["env", *env_tokens] if env_tokens else []) + ["kscc", *argv]
+    log_agent_start_cmd(["pane", "run", pane_id, *run_cmd], env_str)
+    from time import time_ns
+
+    try:
+        herdr("pane", "run", pane_id, *run_cmd)
+        # 立即接管：注册为 herdr 托管 agent（hooks 之后接手状态更新）
+        herdr(
+            "pane", "report-agent", pane_id,
+            "--source", "kscc-agent", "--agent", "kscc",
+            "--state", "working", "--seq", str(time_ns()),
+        )
+        herdr("pane", "rename", pane_id, name)
+        notify("kscc agent created", f"{name} @ {ws_id}/{tab_id} (pane {pane_id})")
+    except subprocess.CalledProcessError as e:
+        notify("Create kscc agent failed", (e.stderr or e.stdout or str(e)).strip())
+    except Exception as e:
+        notify("Create kscc agent failed", str(e))
+
+
 def _create_agent_legacy(agent):
     # herdr < 0.8 signature: `agent start <NAME> --cwd <cwd> --workspace <ws>
     # --no-focus [--env K=V]... -- <argv>`. argv is the agent binary directly
@@ -799,6 +971,7 @@ def _create_agent_legacy(agent):
             notify("Create agent failed", f"bad env: {e}")
             return
     cmd.extend(["--", *argv])
+    log_agent_start_cmd(cmd, env_str)
     try:
         r = herdr(*cmd)
         res = json.loads(r)["result"]
@@ -901,13 +1074,24 @@ def create_agent(agent):
     # available shell), then start the agent there.
     default_cwd = (agent.get("cwd") if agent else None) or os.getcwd()
 
-    # 1. agent kind — default opencode
+    # 1. agent kind — default kscc
     kind = pick_kind()
     if not kind:
         notify("Create agent cancelled", "no kind chosen")
         return
 
-    # 2. agent name — default = kind
+    # 2. target workspace — 先选"在哪创建"，再填 agent 参数（更自然的顺序）
+    ws_id = pick_workspace_for_new()
+    if not ws_id:
+        notify("Create agent cancelled", "no workspace chosen")
+        return
+
+    # 3. 选该 workspace 下的 tab — 严格按 workspace→tab→pane 的层级顺序
+    tab_id = pick_tab_in_workspace(ws_id)
+    if not tab_id:
+        return
+
+    # 4. agent name — default = kind
     name = prompt_prefill("Agent name: ", kind)
     if not name:
         name = kind
@@ -918,7 +1102,7 @@ def create_agent(agent):
         cwd = default_cwd
 
     # 4. extra argv after `--` (optional, blank = none)
-    argv_str = prompt("Extra args after -- (blank=none): ")
+    argv_str = prompt_prefill("Extra args after --: ")
     argv = []
     if argv_str:
         try:
@@ -928,18 +1112,17 @@ def create_agent(agent):
             return
 
     # 5. env vars — KEY=VAL space-separated, blank = none
-    env_str = prompt("Env vars (KEY=VAL ..., blank=none): ")
+    env_str = prompt_prefill("Env vars (KEY=VAL): ")
 
     # 5.5 --resume 便捷处理：自动定位会话所属项目、改写 Cwd、迁移旧会话
     cwd = resolve_resume_cwd(cwd, argv)
 
-    # 6. target workspace — split a fresh pane there
-    ws_id = pick_workspace_for_new()
-    if not ws_id:
-        notify("Create agent cancelled", "no workspace chosen")
-        return
+    # 伪 kind：kscc 直接启动（herdr 无此内置 kind，不走 agent start）
+    if kind == "kscc":
+        return _create_kscc_agent(name, cwd, argv, env_str, ws_id, tab_id)
 
-    pane_id = split_clean_pane(ws_id, cwd)
+    # workspace/tab 已在步骤 2/3 选定，agent 作为该 tab 下的新 pane
+    pane_id = split_pane_in_tab(tab_id, cwd)
     if not pane_id:
         return
 
@@ -960,6 +1143,7 @@ def create_agent(agent):
             return
     if argv:
         cmd.extend(["--", *argv])
+    log_agent_start_cmd(cmd, env_str)
     try:
         r = herdr(*cmd)
         res = json.loads(r)["result"]
